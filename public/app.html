@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio Coral · Painel</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lobster&family=Solway:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <script src="/assets/js/icons.js"></script>
+  <script defer src="/assets/js/app.js"></script>
+  <script defer src="/vendor/alpine.js"></script>
+</head>
+<body x-data="coral" x-cloak>
+
+<!-- ═════════════ LOGIN ═════════════ -->
+<template x-if="booted && !user">
+  <div class="login-wrap">
+    <div class="login-art">
+      <span class="brand-lockup"><span class="studio">STUDIO</span><span class="logo"></span></span>
+    </div>
+    <div class="login-form">
+      <form @submit.prevent="doLogin">
+        <h1>Entrar</h1>
+        <div class="field">
+          <label for="email">E-mail</label>
+          <input id="email" class="input" type="email" autocomplete="username" required x-model="login.email">
+        </div>
+        <div class="field">
+          <label for="pass">Senha</label>
+          <input id="pass" class="input" type="password" autocomplete="current-password" required x-model="login.password">
+        </div>
+        <p class="note red" x-show="login.error" x-text="login.error" style="margin:0"></p>
+        <button class="btn btn-dark btn-lg" :disabled="login.loading">
+          <span class="spin" x-show="login.loading"></span> Entrar
+        </button>
+        <a href="/" class="small">Voltar para o site</a>
+      </form>
+    </div>
+  </div>
+</template>
+
+<!-- ═════════════ APLICAÇÃO ═════════════ -->
+<template x-if="user">
+<div class="shell">
+  <aside class="sidebar" :class="{ open: navOpen }">
+    <a href="#/painel" class="brand-lockup" aria-label="Studio Coral"><span class="studio">STUDIO</span><span class="logo"></span></a>
+    <nav class="nav">
+      <a href="#/painel" :class="{ active: route.name === 'painel' }" @click="navOpen=false"><span x-html="icon('home')"></span> Painel</a>
+      <a href="#/campanhas" :class="{ active: route.name === 'campanhas' }" @click="navOpen=false"><span x-html="icon('send')"></span> Campanhas</a>
+      <a href="#/contatos" :class="{ active: route.name === 'contatos' }" @click="navOpen=false"><span x-html="icon('users')"></span> Contatos</a>
+      <a href="#/restaurantes" :class="{ active: route.name === 'restaurantes' }" @click="navOpen=false"><span x-html="icon('store')"></span> Restaurantes <span class="count" x-text="restaurants.length"></span></a>
+      <div class="nav-label">Sistema</div>
+      <a href="#/conexao" :class="{ active: route.name === 'conexao' }" @click="navOpen=false"><span x-html="icon('plug')"></span> Conexão</a>
+      <a href="#/configuracoes" :class="{ active: route.name === 'configuracoes' }" @click="navOpen=false"><span x-html="icon('settings')"></span> Configurações</a>
+    </nav>
+    <div class="side-foot">
+      <a href="#/conexao" class="conn-line" @click="navOpen=false">
+        <span class="conn-dot" :class="conn.state"></span>
+        <span><span x-text="CONN[conn.state] || conn.state"></span> · <span x-text="{ simulator: 'Simulador', wppconnect: 'WPPConnect', 'whatsapp-cloud': 'API Oficial' }[conn.provider] || ''"></span></span>
+      </a>
+      <div class="user-line"><span x-text="user.name"></span><button @click="logout">Sair</button></div>
+    </div>
+  </aside>
+  <div class="overlay" style="z-index:30" x-show="navOpen" @click="navOpen=false"></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="btn btn-icon menu-btn" @click="navOpen=true" aria-label="Abrir menu"><span x-html="icon('menu')"></span></button>
+      <div class="title">
+        <template x-if="route.name === 'painel'"><div><h1>Visão geral</h1><div class="sub" x-text="`Últimos 14 dias · ${scopeName}`"></div></div></template>
+        <template x-if="route.name === 'campanhas' && !route.params.id"><div><h1>Campanhas</h1></div></template>
+        <template x-if="route.name === 'campanhas' && editor"><div><a href="#/campanhas" class="back"><span x-html="icon('left',14)"></span> Campanhas</a><h1 x-text="editor.form.name || 'Nova campanha'"></h1></div></template>
+        <template x-if="route.name === 'campanhas' && detail"><div><a href="#/campanhas" class="back"><span x-html="icon('left',14)"></span> Campanhas</a><h1 x-text="detail.name"></h1><div class="sub" x-text="detail.restaurant"></div></div></template>
+        <template x-if="route.name === 'contatos'"><div><h1>Contatos</h1><div class="sub">Clientes que autorizaram receber mensagens de cada restaurante</div></div></template>
+        <template x-if="route.name === 'restaurantes'"><div><h1>Restaurantes</h1></div></template>
+        <template x-if="route.name === 'conexao'"><div><h1>Conexão</h1><div class="sub">Por onde as mensagens são enviadas</div></div></template>
+        <template x-if="route.name === 'configuracoes'"><div><h1>Configurações</h1></div></template>
+      </div>
+      <template x-if="['painel','campanhas','contatos'].includes(route.name) && !route.params.id">
+        <select class="select" aria-label="Restaurante" :value="scope" @change="setScope($event.target.value)">
+          <option value="">Todos os restaurantes</option>
+          <template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id === scope"></option></template>
+        </select>
+      </template>
+      <template x-if="route.name === 'campanhas' && !route.params.id">
+        <a href="#/campanhas/nova" class="btn btn-primary"><span x-html="icon('plus')"></span> Nova campanha</a>
+      </template>
+    </header>
+
+    <!-- ─────────── PAINEL ─────────── -->
+    <template x-if="route.name === 'painel' && dashboard">
+      <section>
+        <div class="card stats">
+          <div><div class="label-up">Enviadas</div><div class="value" x-text="fmt.int(dashboard.totals.sent)"></div><div class="foot" x-text="`${fmt.pct(dashboard.totals.deliveryRate)} entregues`"></div></div>
+          <div><div class="label-up">Lidas</div><div class="value" x-text="fmt.pct(dashboard.totals.readRate)"></div><div class="foot" x-text="`${fmt.int(dashboard.totals.read)} mensagens`"></div></div>
+          <div><div class="label-up">Cliques</div><div class="value" x-text="fmt.int(dashboard.totals.clicked)"></div><div class="foot" x-text="`${fmt.pct(dashboard.totals.clickRate)} das entregues`"></div></div>
+          <div><div class="label-up">Pedidos</div><div class="value" x-text="fmt.int(dashboard.totals.orders)"></div><div class="foot" x-text="`ticket médio ${fmt.money(dashboard.totals.ticket)}`"></div></div>
+          <div class="money"><div class="label-up">Vendas pelo site</div><div class="value" x-text="fmt.money(dashboard.totals.revenue)"></div><div class="foot">pedidos vindos das campanhas</div></div>
+        </div>
+
+        <div class="dash-grid">
+          <div class="card">
+            <div class="card-head">
+              <h3>Por dia</h3>
+              <div class="legend"><span><i style="background:#092b03"></i>Enviadas</span><span><i style="background:#6f9a5f"></i>Lidas</span><span><i style="background:#d99a00"></i>Cliques</span><span><i style="background:#73350c;height:8px;width:8px"></i>Pedidos</span></div>
+            </div>
+            <div style="padding:12px 16px 8px;position:relative" @mousemove="chartMove" @mouseleave="chartHover=null">
+              <div x-html="trendSvg"></div>
+              <template x-if="hoverDay">
+                <div class="chart-tip">
+                  <b style="grid-column:1/-1;text-align:left" x-text="fmt.date(hoverDay.day + 'T12:00')"></b>
+                  <span>Enviadas</span><b x-text="hoverDay.sent"></b>
+                  <span>Lidas</span><b x-text="hoverDay.read"></b>
+                  <span>Cliques</span><b x-text="hoverDay.clicks"></b>
+                  <span>Pedidos</span><b x-text="hoverDay.orders"></b>
+                </div>
+              </template>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Da mensagem ao pedido</h3></div>
+            <div class="card-pad funnel">
+              <template x-for="s in funnel(dashboard.totals)" :key="s.label">
+                <div class="funnel-row">
+                  <span x-text="s.label"></span>
+                  <div class="bar" :class="{ low: s.low }"><span :style="`width:${s.width}%;background:${s.color}`"></span><b x-text="fmt.int(s.value)"></b></div>
+                  <span class="rate" x-text="s.rate + '%'"></span>
+                </div>
+              </template>
+              <p class="small muted" style="margin:6px 0 0">Percentual em relação à etapa anterior.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-grid">
+          <div class="card">
+            <div class="card-head"><h3>Campanhas</h3><a href="#/campanhas" class="small">Ver todas</a></div>
+            <div class="table-wrap">
+              <table class="table camp-table">
+                <thead><tr><th>Campanha</th><th>Situação</th><th class="hide-sm">Entrega</th><th>Cliques</th><th>Pedidos</th><th style="text-align:right">Vendas</th></tr></thead>
+                <tbody>
+                  <template x-for="c in dashboard.campaigns.slice(0,6)" :key="c.id">
+                    <tr @click="go(`#/campanhas/${c.id}`)">
+                      <td><b x-text="c.name"></b><div class="tiny muted" x-text="`${c.restaurant} · ${fmt.date(c.startedAt)}`"></div></td>
+                      <td><span class="status" :class="c.status" x-text="STATUS[c.status]"></span></td>
+                      <td class="hide-sm num" x-text="fmt.pct(c.stats.deliveryRate)"></td>
+                      <td class="num" x-text="fmt.int(c.stats.clicked)"></td>
+                      <td class="num" x-text="fmt.int(c.stats.orders)"></td>
+                      <td class="num" style="text-align:right" x-text="fmt.money(c.stats.revenue)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-if="!dashboard.campaigns.length"><div class="empty">Nenhuma campanha enviada ainda.</div></template>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Últimos pedidos</h3><span class="small muted" x-text="`${dashboard.contacts.authorized} contatos autorizados`"></span></div>
+            <ul class="orders">
+              <template x-for="o in dashboard.recentOrders" :key="o.id">
+                <li><div><b x-text="o.customerName || 'Cliente'"></b><div class="tiny muted" x-text="`${o.campaign} · ${fmt.rel(o.createdAt)}`"></div></div><span class="val" x-text="fmt.money(o.value)"></span></li>
+              </template>
+            </ul>
+            <template x-if="!dashboard.recentOrders.length"><div class="empty">Os pedidos feitos pelos links das campanhas aparecem aqui.</div></template>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── RESTAURANTES ─────────── -->
+    <template x-if="route.name === 'restaurantes'">
+      <section class="rest-list">
+        <template x-for="r in restaurants" :key="r.id">
+          <article class="card rest-card" :style="`--c:${r.color || '#73350c'}`">
+            <div class="rest-head">
+              <span class="mono-mark" x-text="initials(r.name)"></span>
+              <div><h3 x-text="r.name"></h3><div class="small muted" x-text="[r.segment, r.city].filter(Boolean).join(' · ')"></div></div>
+            </div>
+            <div class="rest-body">
+              <p class="small" style="margin:0;color:var(--ink-2)" x-text="r.goals || 'Diagnóstico ainda não preenchido.'"></p>
+              <div class="rest-nums">
+                <div><b x-text="r.authorizedCount"></b><span>contatos</span></div>
+                <div><b x-text="r.campaignsCount"></b><span>campanhas</span></div>
+                <div><b x-text="(r.menu || []).length"></b><span>itens no cardápio</span></div>
+              </div>
+              <div class="row-wrap" style="margin-top:auto">
+                <button class="btn btn-sm" @click="editRestaurant(r)">Editar diagnóstico</button>
+                <button class="btn btn-sm" @click="setScope(r.id); go('#/campanhas/nova')">Nova campanha</button>
+                <a class="btn btn-sm btn-ghost" :href="r.siteUrl || r.demoUrl" target="_blank" rel="noopener">Site <span x-html="icon('external',14)"></span></a>
+              </div>
+            </div>
+          </article>
+        </template>
+        <button class="add-card" @click="editRestaurant(null)">+ Cadastrar restaurante</button>
+      </section>
+    </template>
+
+    <!-- ─────────── CONTATOS ─────────── -->
+    <template x-if="route.name === 'contatos'">
+      <section class="card">
+        <div class="card-head" style="flex-wrap:wrap">
+          <div class="row-wrap grow">
+            <input class="input" style="max-width:260px" type="search" placeholder="Buscar por nome ou telefone" x-model="contactFilter.search" @input.debounce.300ms="loadContacts()">
+            <select class="select" style="width:auto" x-model="contactFilter.tag" @change="loadContacts()">
+              <option value="">Todas as tags</option>
+              <template x-for="t in contactTags" :key="t.tag"><option :value="t.tag" x-text="`${t.tag} (${t.count})`"></option></template>
+            </select>
+            <select class="select" style="width:auto" x-model="contactFilter.status" @change="loadContacts()">
+              <option value="">Todos</option><option value="authorized">Autorizados</option><option value="optedOut">Descadastrados</option><option value="pending">Sem autorização</option>
+            </select>
+          </div>
+          <div class="row-wrap">
+            <button class="btn" @click="openImport()"><span x-html="icon('upload',16)"></span> Importar planilha</button>
+            <button class="btn btn-dark" @click="editContact(null)">Adicionar</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Nome</th><th>WhatsApp</th><th class="hide-sm">Tags</th><th class="hide-sm">Autorização</th><th>Situação</th><th></th></tr></thead>
+            <tbody>
+              <template x-for="c in contacts.slice(0, 300)" :key="c.id">
+                <tr>
+                  <td><span x-text="c.name || '—'"></span><div class="tiny muted" x-show="!scope" x-text="restaurantById(c.restaurantId)?.name"></div></td>
+                  <td class="num" x-text="fmt.phone(c.phone)"></td>
+                  <td class="hide-sm"><div class="row-wrap" style="gap:4px"><template x-for="t in c.tags" :key="t"><span class="chip" x-text="t"></span></template></div></td>
+                  <td class="hide-sm small muted" x-text="c.optInSource || '—'"></td>
+                  <td><span class="status" :class="contactStatus(c).cls" x-text="contactStatus(c).label"></span></td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <button class="btn btn-ghost btn-sm" @click="editContact(c)">Editar</button>
+                    <button class="btn btn-ghost btn-sm" @click="toggleOptOut(c)" x-text="c.optedOut ? 'Reativar' : 'Descadastrar'"></button>
+                    <button class="btn btn-ghost btn-icon btn-sm" title="Remover" aria-label="Remover" @click="deleteContact(c)" x-html="icon('trash',15)"></button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="!contacts.length"><div class="empty">Nenhum contato encontrado.</div></template>
+          <div class="small muted" style="padding:10px 16px" x-show="contacts.length" x-text="`${fmt.int(contacts.length)} contatos${contacts.length > 300 ? ' (mostrando 300)' : ''}`"></div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── CAMPANHAS (lista) ─────────── -->
+    <template x-if="route.name === 'campanhas' && !route.params.id">
+      <section>
+        <div class="filters">
+          <template x-for="f in [['all','Todas'],['active','Em andamento'],['draft','Rascunhos'],['completed','Concluídas']]" :key="f[0]">
+            <button :class="{ on: campaignFilter === f[0] }" @click="campaignFilter = f[0]"><span x-text="f[1]"></span><small x-text="campaignCount(f[0])"></small></button>
+          </template>
+        </div>
+        <div class="card table-wrap">
+          <table class="table camp-table">
+            <thead><tr><th>Campanha</th><th>Situação</th><th>Enviadas</th><th class="hide-sm">Leitura</th><th>Cliques</th><th>Pedidos</th><th style="text-align:right">Vendas</th></tr></thead>
+            <tbody>
+              <template x-for="c in filteredCampaigns" :key="c.id">
+                <tr @click="openCampaign(c)">
+                  <td>
+                    <b x-text="c.name"></b>
+                    <div class="tiny muted" x-text="[c.restaurant, c.status === 'scheduled' ? `envio em ${fmt.dateTime(c.scheduledAt)}` : c.startedAt ? fmt.dateTime(c.startedAt) : `criada ${fmt.rel(c.createdAt)}`].join(' · ')"></div>
+                    <template x-if="c.status === 'sending' || c.status === 'paused'"><div class="mini-bar" style="margin-top:6px;max-width:220px"><span :style="`width:${c.stats.progress}%`"></span></div></template>
+                  </td>
+                  <td><span class="status" :class="c.status" x-text="STATUS[c.status]"></span></td>
+                  <td class="num" x-text="fmt.int(c.stats.sent)"></td>
+                  <td class="num hide-sm" x-text="c.stats.sent ? fmt.pct(c.stats.readRate) : '—'"></td>
+                  <td class="num" x-text="fmt.int(c.stats.clicked)"></td>
+                  <td class="num" x-text="fmt.int(c.stats.orders)"></td>
+                  <td class="num" style="text-align:right" x-text="fmt.money(c.stats.revenue)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="!filteredCampaigns.length"><div class="empty">Nenhuma campanha neste filtro. <a href="#/campanhas/nova">Criar campanha</a></div></template>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── EDITOR DE CAMPANHA ─────────── -->
+    <template x-if="route.name === 'campanhas' && editor">
+      <section>
+        <nav class="steps">
+          <template x-for="s in [[1,'Planejamento'],[2,'Mensagem'],[3,'Público'],[4,'Envio']]" :key="s[0]">
+            <button :class="{ on: editor.step === s[0], done: editor.step > s[0] }" @click="goStep(s[0])"><span class="n" x-text="s[0]"></span><span x-text="s[1]"></span></button>
+          </template>
+        </nav>
+
+        <div class="editor-grid">
+          <div class="stack">
+            <!-- 1. Planejamento -->
+            <template x-if="editor.step === 1">
+              <div class="card card-pad stack">
+                <div class="grid-2">
+                  <div class="field">
+                    <label>Restaurante</label>
+                    <select class="select" x-model="editor.form.restaurantId" @change="editor.form.coupon = editor.form.coupon || editorRestaurant?.coupon || ''; refreshEditorTags()">
+                      <template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id === editor.form.restaurantId"></option></template>
+                    </select>
+                  </div>
+                  <div class="field"><label>Nome interno</label><input class="input" x-model="editor.form.name" placeholder="Ex.: Sexta de massas, outubro"></div>
+                  <div class="field">
+                    <label>Objetivo</label>
+                    <input class="input" list="objectives" x-model="editor.form.objective">
+                    <datalist id="objectives"><template x-for="o in OBJECTIVES"><option :value="o"></option></template></datalist>
+                  </div>
+                  <div class="field"><label>Ocasião</label><input class="input" x-model="editor.form.occasion" placeholder="Ex.: Dia das Mães"></div>
+                  <div class="field"><label>Cupom</label><input class="input" x-model="editor.form.coupon" style="text-transform:uppercase"><span class="hint">Entra na mensagem onde estiver {{cupom}}.</span></div>
+                  <div class="field"><label>Link de destino</label><input class="input" type="url" x-model="editor.form.destinationUrl" :placeholder="editorRestaurant?.siteUrl || editorRestaurant?.demoUrl"><span class="hint">Em branco, vai para o site do restaurante.</span></div>
+                </div>
+                <template x-if="editorRestaurant && editorRestaurant.goals">
+                  <p class="note" style="margin:0"><b>Objetivo do restaurante:</b> <span x-text="editorRestaurant.goals"></span></p>
+                </template>
+                <div>
+                  <div class="label" style="margin-bottom:8px">Começar de um modelo</div>
+                  <div class="ideas">
+                    <template x-for="idea in meta.ideas" :key="idea.id">
+                      <button class="idea" @click="applyIdea(idea)"><b x-text="idea.title"></b><small x-text="idea.objective"></small></button>
+                    </template>
+                  </div>
+                </div>
+                <div class="row" style="justify-content:flex-end"><button class="btn btn-dark" @click="goStep(2)">Continuar</button></div>
+              </div>
+            </template>
+
+            <!-- 2. Mensagem -->
+            <template x-if="editor.step === 2">
+              <div class="card card-pad stack">
+                <div class="field">
+                  <label>Texto</label>
+                  <div>
+                    <div class="toolbar">
+                      <template x-for="v in meta.variables" :key="v.key"><button type="button" class="tool" @click="insertAtCursor(`{{${v.key}}}`)" :title="`Ex.: ${v.sample}`" x-text="v.label"></button></template>
+                      <span style="width:1px;height:18px;background:var(--line-2);margin:0 4px"></span>
+                      <button type="button" class="tool" @click="wrapSelection('*')" title="Negrito"><b>N</b></button>
+                      <button type="button" class="tool" @click="wrapSelection('_')" title="Itálico"><i>I</i></button>
+                      <button type="button" class="tool" @click="insertAtCursor('{Oi|Olá}')" title="Cada cliente recebe uma das opções">Variação</button>
+                      <template x-for="e in EMOJIS.slice(0, 8)"><button type="button" class="tool" style="padding:2px 5px" @click="insertAtCursor(e)" x-text="e"></button></template>
+                    </div>
+                    <textarea class="textarea" x-ref="msg" x-model="editor.form.message"></textarea>
+                    <div class="tiny muted" style="text-align:right;margin-top:4px" x-text="`${editor.form.message.length} caracteres`"></div>
+                  </div>
+                </div>
+                <template x-if="messageWarnings.length">
+                  <ul class="small muted" style="margin:-6px 0 0;padding-left:18px"><template x-for="w in messageWarnings"><li x-text="w"></li></template></ul>
+                </template>
+
+                <div class="field">
+                  <label>Imagem</label>
+                  <div class="upload" :class="{ drag: dragOver }" @dragover.prevent="dragOver=true" @dragleave="dragOver=false" @drop.prevent="onDrop($event)">
+                    <template x-if="editor.form.mediaUrl"><img class="thumb" :src="editor.form.mediaUrl" alt=""></template>
+                    <template x-if="!editor.form.mediaUrl"><div class="thumb" x-html="icon('image',28)"></div></template>
+                    <div class="stack" style="gap:6px">
+                      <div class="small" x-text="editor.form.mediaUrl ? 'A imagem vai junto com o texto, que vira a legenda.' : 'Arraste uma foto aqui ou escolha do computador. JPG, PNG ou WEBP até 5 MB.'"></div>
+                      <div class="row-wrap">
+                        <label class="btn btn-sm" :class="{ 'btn-dark': !editor.form.mediaUrl }">
+                          <span class="spin" x-show="uploading"></span>
+                          <span x-text="editor.form.mediaUrl ? 'Trocar imagem' : 'Escolher imagem'"></span>
+                          <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" @change="uploadImage($event.target.files[0]); $event.target.value=''">
+                        </label>
+                        <template x-if="editor.form.mediaUrl"><button type="button" class="btn btn-sm btn-ghost" @click="editor.form.mediaUrl=''">Remover</button></template>
+                      </div>
+                    </div>
+                  </div>
+                  <template x-if="uploads.length">
+                    <div style="margin-top:6px">
+                      <div class="hint" style="margin-bottom:6px">Imagens já enviadas</div>
+                      <div class="gallery">
+                        <template x-for="u in uploads.slice(0, 12)" :key="u.file">
+                          <button type="button" :class="{ on: editor.form.mediaUrl === u.url }" @click="editor.form.mediaUrl = u.url" :title="u.name"><img :src="u.url" :alt="u.name" loading="lazy"></button>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <details style="margin-top:4px"><summary class="small muted" style="cursor:pointer">Usar um link de imagem</summary><input class="input" style="margin-top:6px" type="url" x-model="editor.form.mediaUrl" placeholder="https://"></details>
+                </div>
+
+                <label class="check"><input type="checkbox" x-model="editor.form.includeFooter"><span>Incluir no final: <span class="muted" x-text="settings.footer"></span></span></label>
+
+                <details :open="editor.showCloud">
+                  <summary class="small" style="cursor:pointer;font-weight:600">Template da API Oficial (usado só quando o canal for a API da Meta)</summary>
+                  <div class="grid-2" style="margin-top:12px">
+                    <div class="field"><label>Nome do template aprovado</label><input class="input mono" x-model="editor.form.cloudTemplate.name" placeholder="promo_restaurante_v1"></div>
+                    <div class="field"><label>Idioma</label><input class="input mono" x-model="editor.form.cloudTemplate.language" placeholder="pt_BR"></div>
+                    <div class="field" style="grid-column:1/-1"><label>Parâmetros {{1}}, {{2}}… (um por linha)</label><textarea class="textarea mono" style="min-height:84px" x-model="editor.form.cloudTemplate.paramsText" placeholder="{{primeiro_nome}}&#10;{{cupom}}&#10;{{link}}"></textarea></div>
+                  </div>
+                </details>
+                <div class="row between">
+                  <button class="btn btn-ghost" @click="goStep(1)">Voltar</button>
+                  <div class="row"><button class="btn" @click="saveCampaign()" :disabled="editor.saving">Salvar rascunho</button><button class="btn btn-dark" @click="goStep(3)">Continuar</button></div>
+                </div>
+              </div>
+            </template>
+
+            <!-- 3. Público -->
+            <template x-if="editor.step === 3">
+              <div class="card card-pad stack">
+                <div class="audience"><b x-text="fmt.int(editor.audience.count)"></b><span>contatos vão receber. Só entram clientes que autorizaram e não pediram para sair.</span></div>
+                <div class="field">
+                  <label>Filtrar por tag</label>
+                  <div class="row-wrap">
+                    <template x-for="t in editor.tags" :key="t.tag">
+                      <button type="button" class="chip chip-toggle" :class="{ on: editor.form.segment.tags.includes(t.tag) }" @click="toggleTag(t.tag)"><span x-text="t.tag"></span> <span style="opacity:.6" x-text="t.count"></span></button>
+                    </template>
+                    <template x-if="!editor.tags.length"><span class="small muted">Os contatos deste restaurante ainda não têm tags.</span></template>
+                  </div>
+                  <span class="hint">Sem tag marcada, a campanha vai para toda a base autorizada.</span>
+                </div>
+                <div class="row" x-show="editor.form.segment.tags.length > 1">
+                  <span class="small">Precisa ter</span>
+                  <div class="seg">
+                    <button :class="{ on: editor.form.segment.match === 'any' }" @click="editor.form.segment.match='any'; refreshAudience()">qualquer uma</button>
+                    <button :class="{ on: editor.form.segment.match === 'all' }" @click="editor.form.segment.match='all'; refreshAudience()">todas</button>
+                  </div>
+                </div>
+                <template x-if="editor.audience.sample?.length">
+                  <p class="small muted" style="margin:0" x-text="'Ex.: ' + editor.audience.sample.map(s => s.name || fmt.phone(s.phone)).join(', ')"></p>
+                </template>
+                <div class="row between">
+                  <button class="btn btn-ghost" @click="goStep(2)">Voltar</button>
+                  <button class="btn btn-dark" @click="goStep(4)" :disabled="!editor.audience.count">Continuar</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- 4. Envio -->
+            <template x-if="editor.step === 4">
+              <div class="stack">
+                <div class="card card-pad">
+                  <dl class="summary">
+                    <dt>Restaurante</dt><dd x-text="editorRestaurant?.name"></dd>
+                    <dt>Objetivo</dt><dd x-text="editor.form.objective || '—'"></dd>
+                    <dt>Público</dt><dd x-text="`${fmt.int(editor.audience.count)} contatos` + (editor.form.segment.tags.length ? ` (${editor.form.segment.tags.join(', ')})` : ' (base completa)')"></dd>
+                    <dt>Imagem</dt><dd x-text="editor.form.mediaUrl ? 'Sim' : 'Não'"></dd>
+                    <dt>Canal</dt><dd><span class="status" :class="conn.state" x-text="`${conn.label} · ${CONN[conn.state]}`"></span></dd>
+                    <dt>Tempo estimado</dt><dd x-text="estimate"></dd>
+                    <dt>Link</dt><dd class="small" style="word-break:break-all" x-text="editor.form.destinationUrl || editorRestaurant?.siteUrl || editorRestaurant?.demoUrl"></dd>
+                  </dl>
+                  <template x-if="conn.state !== 'connected'">
+                    <p class="note red" style="margin:14px 0 0">O canal está desconectado. A campanha pode ser iniciada e fica na fila até a conexão voltar. <a href="#/conexao">Conectar</a></p>
+                  </template>
+                </div>
+                <div class="card card-pad stack">
+                  <h3 style="font-size:15.5px">Teste no seu WhatsApp</h3>
+                  <div class="row-wrap">
+                    <input class="input" style="max-width:240px" x-model="testPhone" placeholder="(31) 99999-9999" inputmode="tel">
+                    <button class="btn" @click="sendTest" :disabled="editor.sendingTest"><span class="spin" x-show="editor.sendingTest"></span> Enviar teste</button>
+                  </div>
+                </div>
+                <div class="card card-pad stack">
+                  <h3 style="font-size:15.5px">Quando enviar</h3>
+                  <div class="row-wrap" style="gap:20px">
+                    <label class="check"><input type="radio" name="when" :checked="!editor.scheduling" @change="editor.scheduling=false"> Agora</label>
+                    <label class="check"><input type="radio" name="when" :checked="editor.scheduling" @change="editor.scheduling=true"> Agendar</label>
+                    <template x-if="editor.scheduling"><input class="input" type="datetime-local" x-model="editor.scheduledAt" style="max-width:240px"></template>
+                  </div>
+                  <template x-if="editor.form.status === 'scheduled'"><p class="note" style="margin:0">Já agendada. <a href="" @click.prevent="unschedule()">Cancelar agendamento</a></p></template>
+                </div>
+                <div class="row between">
+                  <button class="btn btn-ghost" @click="goStep(3)">Voltar</button>
+                  <button class="btn btn-primary btn-lg" @click="launch" :disabled="editor.starting || !editor.audience.count" x-text="editor.scheduling ? 'Agendar envio' : `Enviar para ${fmt.int(editor.audience.count)} contatos`"></button>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Pré-visualização -->
+          <aside class="preview-col">
+            <div class="phone">
+              <div class="phone-screen">
+                <div class="wa-top">
+                  <span class="wa-avatar" :style="`--c:${editorRestaurant?.color || '#73350c'}`" x-text="initials(editorRestaurant?.name)"></span>
+                  <div><div class="name" x-text="editorRestaurant?.name || 'Restaurante'"></div><div class="sub">conta comercial</div></div>
+                </div>
+                <div class="wa-chat">
+                  <span class="wa-day">HOJE</span>
+                  <template x-if="previewText">
+                    <div class="wa-bubble">
+                      <template x-if="editor.form.mediaUrl"><img :src="editor.form.mediaUrl" alt="" @error="$el.style.display='none'"></template>
+                      <div class="wa-text" x-html="waFormat(previewText)"></div>
+                      <div class="wa-meta"><span>18:30</span></div>
+                    </div>
+                  </template>
+                </div>
+                <div class="wa-input"><span>Mensagem</span><i>➤</i></div>
+              </div>
+            </div>
+            <button class="btn btn-sm btn-ghost" @click="editor.seed++" x-show="previewText && /\{[^{}]*\|/.test(editor.form.message)">Ver outra variação</button>
+          </aside>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── DETALHE DA CAMPANHA ─────────── -->
+    <template x-if="route.name === 'campanhas' && detail">
+      <section class="stack">
+        <div class="card card-pad">
+          <div class="row-wrap between">
+            <div class="row-wrap" style="gap:14px">
+              <span class="status" :class="detail.status" x-text="STATUS[detail.status]"></span>
+              <span class="small muted" x-text="`Início ${fmt.dateTime(detail.startedAt)}${detail.completedAt ? ' · fim ' + fmt.dateTime(detail.completedAt) : ''}`"></span>
+            </div>
+            <div class="row-wrap">
+              <template x-if="detail.status === 'sending'"><button class="btn btn-sm" @click="campaignAction('pause')">Pausar</button></template>
+              <template x-if="detail.status === 'paused'"><button class="btn btn-sm btn-dark" @click="campaignAction('resume')">Retomar</button></template>
+              <template x-if="['sending','paused'].includes(detail.status)"><button class="btn btn-sm btn-danger" @click="campaignAction('cancel')">Cancelar envio</button></template>
+              <button class="btn btn-sm" @click="duplicate(detail)">Duplicar</button>
+              <template x-if="['completed','canceled'].includes(detail.status)"><button class="btn btn-sm btn-ghost" @click="deleteCampaign(detail)">Excluir</button></template>
+            </div>
+          </div>
+          <div class="progress-line"><span :style="`width:${detail.stats.progress}%`"></span></div>
+          <div class="small muted" x-text="`${detail.stats.processed} de ${detail.stats.audience} processadas`"></div>
+          <template x-if="detail.waitingReason && detail.status === 'sending'"><p class="note" style="margin:12px 0 0"><span x-text="detail.waitingReason"></span>. <a href="#/conexao" x-show="detail.waitingReason.includes('conexão')">Abrir conexão</a></p></template>
+        </div>
+
+        <div class="card stats" style="grid-template-columns:repeat(6,minmax(0,1fr))">
+          <div><div class="label-up">Enviadas</div><div class="value" x-text="fmt.int(detail.stats.sent)"></div><div class="foot" x-text="`${detail.stats.failed} falharam`"></div></div>
+          <div><div class="label-up">Entregues</div><div class="value" x-text="fmt.pct(detail.stats.deliveryRate)"></div><div class="foot" x-text="`${detail.stats.delivered} mensagens`"></div></div>
+          <div><div class="label-up">Lidas</div><div class="value" x-text="fmt.pct(detail.stats.readRate)"></div><div class="foot" x-text="`${detail.stats.read} mensagens`"></div></div>
+          <div><div class="label-up">Cliques</div><div class="value" x-text="fmt.int(detail.stats.clicked)"></div><div class="foot" x-text="`${fmt.pct(detail.stats.clickRate)} das entregues`"></div></div>
+          <div><div class="label-up">Pedidos</div><div class="value" x-text="fmt.int(detail.stats.orders)"></div><div class="foot" x-text="`${fmt.pct(detail.stats.conversionRate)} de quem clicou`"></div></div>
+          <div class="money"><div class="label-up">Vendas</div><div class="value" x-text="fmt.money(detail.stats.revenue)"></div><div class="foot" x-text="`${detail.stats.replied} respostas`"></div></div>
+        </div>
+
+        <div class="dash-grid" style="margin:0">
+          <div class="card">
+            <div class="card-head" style="flex-wrap:wrap">
+              <h3>Envios</h3>
+              <div class="row-wrap">
+                <input class="input" type="search" style="width:170px;min-height:34px" placeholder="Buscar" x-model="detailFilter.search">
+                <select class="select" style="width:auto;min-height:34px" x-model="detailFilter.status">
+                  <option value="">Todos</option>
+                  <template x-for="e in Object.entries(MSG_STATUS)" :key="e[0]"><option :value="e[0]" x-text="e[1]"></option></template>
+                  <option value="clicked">Clicaram</option><option value="converted">Compraram</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap" style="max-height:560px;overflow:auto">
+              <table class="table">
+                <thead><tr><th>Cliente</th><th>Situação</th><th class="hide-sm">Hora</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="m in filteredMessages.slice(0, 400)" :key="m.id">
+                    <tr>
+                      <td><span x-text="m.name || '—'"></span><div class="tiny muted num" x-text="fmt.phone(m.phone)"></div></td>
+                      <td><span class="status" :class="m.status" x-text="MSG_STATUS[m.status]"></span><div class="tiny" style="color:var(--danger);max-width:240px" x-show="m.error" x-text="m.error"></div></td>
+                      <td class="hide-sm small muted" x-text="m.sentAt ? fmt.time(m.sentAt) : '—'"></td>
+                      <td><span class="flags">
+                        <span x-show="m.clickedAt" x-text="m.clicks > 1 ? `${m.clicks} cliques` : 'clicou'"></span>
+                        <span class="order" x-show="m.convertedAt">pediu</span>
+                        <span x-show="m.repliedAt" :title="m.reply" x-text="m.optOut ? 'saiu da lista' : 'respondeu'"></span>
+                      </span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-if="!filteredMessages.length"><div class="empty">Nada com esse filtro.</div></template>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="card">
+              <div class="card-head"><h3>Da mensagem ao pedido</h3></div>
+              <div class="card-pad funnel">
+                <template x-for="s in funnel(detail.stats)" :key="s.label">
+                  <div class="funnel-row">
+                    <span x-text="s.label"></span>
+                    <div class="bar" :class="{ low: s.low }"><span :style="`width:${s.width}%;background:${s.color}`"></span><b x-text="fmt.int(s.value)"></b></div>
+                    <span class="rate" x-text="s.rate + '%'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Mensagem enviada</h3><span class="small muted" x-text="'como chegou para ' + ((detailMessages.find(x => x.sentAt) || {}).name || 'o cliente')"></span></div>
+              <div class="card-pad" style="background:#efe6d8;border-radius:0 0 var(--r-lg) var(--r-lg)">
+                <div class="wa-bubble" style="max-width:100%">
+                  <template x-if="detail.mediaUrl"><img :src="detail.mediaUrl" alt=""></template>
+                  <div class="wa-text" x-html="waFormat(detailSample)"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── CONEXÃO ─────────── -->
+    <template x-if="route.name === 'conexao'">
+      <section class="stack">
+        <div class="providers">
+          <template x-for="p in providers" :key="p.key">
+            <button class="provider" :class="{ on: p.active }" @click="!p.active && useProvider(p.key)">
+              <div class="row between"><span class="label-up" x-text="{ simulator: 'Demonstração', wppconnect: 'Agora', 'whatsapp-cloud': 'Depois do faturamento' }[p.key]"></span><span class="small" :style="p.active ? 'color:var(--green-3);font-weight:700' : 'color:var(--muted)'" x-text="p.active ? 'Em uso' : 'Usar este'"></span></div>
+              <h3 x-text="p.label"></h3>
+              <span class="small muted" x-text="p.description"></span>
+            </button>
+          </template>
+        </div>
+
+        <div class="dash-grid" style="margin:0">
+          <div class="card card-pad stack">
+            <div>
+              <span class="status" :class="conn.state" style="font-size:16px" x-text="CONN[conn.state]"></span>
+              <div class="small muted" style="margin-top:4px" x-text="conn.me ? [conn.me.name, conn.me.number].filter(Boolean).join(' · ') : (conn.message || 'Nenhum número conectado')"></div>
+            </div>
+            <template x-if="conn.state === 'error'"><p class="note red" style="margin:0" x-text="conn.message"></p></template>
+
+            <template x-if="conn.state === 'qr' && conn.qr">
+              <div class="row" style="align-items:flex-start;gap:24px;flex-wrap:wrap">
+                <div class="qr-box"><img :src="conn.qr" alt="QR Code para conectar o WhatsApp"></div>
+                <ol class="small" style="max-width:280px;line-height:1.8;padding-left:18px;margin:0">
+                  <li>Abra o WhatsApp no celular que vai enviar as campanhas</li>
+                  <li>Toque em <b>Mais opções</b> ou <b>Configurações</b></li>
+                  <li>Entre em <b>Aparelhos conectados</b> e depois em <b>Conectar aparelho</b></li>
+                  <li>Aponte a câmera para este código</li>
+                </ol>
+              </div>
+            </template>
+            <template x-if="conn.state === 'starting'"><div class="row small muted"><span class="spin"></span><span x-text="conn.message || 'Conectando…'"></span></div></template>
+
+            <div class="row-wrap">
+              <template x-if="['disconnected','error'].includes(conn.state)"><button class="btn btn-primary" @click="connect">Conectar</button></template>
+              <template x-if="['connected','qr','starting'].includes(conn.state)"><button class="btn" @click="disconnect(false)">Pausar conexão</button></template>
+              <template x-if="conn.capabilities?.qrLogin && conn.state !== 'disconnected'"><button class="btn btn-danger" @click="disconnect(true)">Desconectar número</button></template>
+            </div>
+
+            <div class="divider" style="margin:0"></div>
+            <div class="field">
+              <label>Enviar mensagem de teste</label>
+              <div class="row-wrap">
+                <input class="input" style="max-width:220px" x-model="testPhone" placeholder="(31) 99999-9999" inputmode="tel">
+                <button class="btn btn-dark" @click="sendConnTest" :disabled="conn.state !== 'connected'">Enviar</button>
+              </div>
+            </div>
+
+            <template x-if="conn.provider === 'wppconnect'">
+              <p class="note small" style="margin:0">Use um número só para campanhas, mantenha os intervalos entre envios e mande apenas para quem autorizou. O WhatsApp Web não é um canal oficial e o número pode ser bloqueado se parecer spam.</p>
+            </template>
+            <template x-if="conn.provider === 'whatsapp-cloud'">
+              <p class="note small" style="margin:0">Webhook na Meta: <code x-text="`${meta.publicUrl}/webhooks/whatsapp`"></code>, com o token de <code>WA_CLOUD_VERIFY_TOKEN</code>.</p>
+            </template>
+
+            <div>
+              <div class="label-up" style="margin-bottom:6px">Para desenvolvedores</div>
+              <div class="code"><span class="c"># .env: canal usado ao iniciar o servidor</span>
+<span class="k">MESSAGING_PROVIDER</span>=simulator | wppconnect | whatsapp-cloud
+
+<span class="c">// src/bootstrap.js: a fila só conhece o contrato</span>
+dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
+            </div>
+          </div>
+
+          <div class="card card-pad" style="display:grid;justify-items:center;gap:12px">
+            <template x-if="conn.provider === 'simulator'">
+              <div style="display:grid;gap:12px;justify-items:center;width:100%">
+                <p class="small muted center" style="margin:0;max-width:340px">Mensagens que o simulador “enviou”. Os links funcionam: abra um para fazer um pedido no site de demonstração.</p>
+                <div class="phone">
+                  <div class="phone-screen">
+                    <div class="wa-top"><span class="wa-avatar" style="--c:#73350c">SC</span><div><div class="name">Enviadas pelo simulador</div><div class="sub" x-text="`${outbox.length} mensagens`"></div></div></div>
+                    <div class="wa-chat">
+                      <template x-for="item in outbox.slice(0, 40)" :key="item.id">
+                        <div style="display:flex;flex-direction:column">
+                          <div class="outbox-to" x-text="`para ${fmt.phone(item.to)}`"></div>
+                          <div class="wa-bubble out">
+                            <template x-if="item.mediaUrl"><img :src="item.mediaUrl" alt=""></template>
+                            <div class="wa-text" x-html="waFormat(item.text)"></div>
+                            <div class="wa-meta"><span x-text="fmt.time(item.at)"></span><span class="ticks" :class="{ read: item.status === 'read' }" x-text="item.status === 'sent' ? '✓' : '✓✓'"></span></div>
+                          </div>
+                          <button class="tool" style="align-self:flex-end;margin-top:3px;font-size:11px" @click="simulateReply(item)">simular resposta SAIR</button>
+                        </div>
+                      </template>
+                      <template x-if="!outbox.length"><div class="wa-day" style="margin-top:40%">Nenhuma mensagem ainda</div></template>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template x-if="conn.provider !== 'simulator'">
+              <div class="empty" style="padding:30px 10px">
+                <span class="snake" style="width:80px;--logo-color:var(--line-2)"></span>
+                <span class="small" style="max-width:300px">As mensagens saem pelo número conectado. Entregas, leituras e cliques aparecem na página de cada campanha.</span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── CONFIGURAÇÕES ─────────── -->
+    <template x-if="route.name === 'configuracoes'">
+      <form class="dash-grid" @submit.prevent="saveSettings">
+        <div class="card card-pad stack">
+          <h3 style="font-size:16px">Ritmo de envio</h3>
+          <p class="small muted" style="margin:0">As mensagens saem uma de cada vez, com uma pausa aleatória entre elas. No simulador a pausa é de 1 a 2 segundos.</p>
+          <div class="grid-3">
+            <div class="field"><label>Pausa mínima (s)</label><input class="input" type="number" min="1" x-model.number="settings.minDelaySeconds"></div>
+            <div class="field"><label>Pausa máxima (s)</label><input class="input" type="number" min="1" x-model.number="settings.maxDelaySeconds"></div>
+            <div class="field"><label>Máximo por dia</label><input class="input" type="number" min="1" x-model.number="settings.dailyLimit"></div>
+          </div>
+          <label class="check"><input type="checkbox" x-model="settings.businessHoursOnly"> Enviar só dentro do horário abaixo</label>
+          <div class="grid-2" x-show="settings.businessHoursOnly">
+            <div class="field"><label>Das</label><input class="input" type="time" x-model="settings.businessHours.start"></div>
+            <div class="field"><label>Até</label><input class="input" type="time" x-model="settings.businessHours.end"></div>
+          </div>
+        </div>
+        <div class="card card-pad stack">
+          <h3 style="font-size:16px">Descadastro</h3>
+          <div class="field"><label>Palavras que tiram o cliente da lista</label><input class="input" :value="Array.isArray(settings.optOutKeywords) ? settings.optOutKeywords.join(', ') : settings.optOutKeywords" @input="settings.optOutKeywords = $event.target.value"><span class="hint">Separadas por vírgula.</span></div>
+          <div class="field"><label>Resposta automática</label><textarea class="textarea" style="min-height:76px" x-model="settings.optOutReply"></textarea></div>
+          <div class="field"><label>Rodapé das campanhas</label><input class="input" x-model="settings.footer"></div>
+          <div class="row" style="justify-content:flex-end"><button class="btn btn-dark">Salvar</button></div>
+        </div>
+      </form>
+    </template>
+  </main>
+</div>
+</template>
+
+<!-- ═════════════ MODAIS ═════════════ -->
+<template x-if="restaurantModal">
+  <div class="overlay" @keydown.escape.window="restaurantModal=null" @click.self="restaurantModal=null">
+    <div class="modal modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div><div class="label-up">Diagnóstico</div><h2 x-text="restaurantModal.id ? restaurantModal.name : 'Novo restaurante'"></h2></div>
+        <button class="btn btn-ghost btn-icon" @click="restaurantModal=null" aria-label="Fechar" x-html="icon('x')"></button>
+      </div>
+      <div class="modal-body">
+        <div class="tabs">
+          <button :class="{ on: restaurantTab==='diagnostico' }" @click="restaurantTab='diagnostico'">Dados</button>
+          <button :class="{ on: restaurantTab==='estrategia' }" @click="restaurantTab='estrategia'">Público e objetivos</button>
+          <button :class="{ on: restaurantTab==='cardapio' }" @click="restaurantTab='cardapio'" x-text="`Cardápio (${restaurantModal.menu.length})`"></button>
+        </div>
+        <div x-show="restaurantTab==='diagnostico'" class="stack">
+          <div class="grid-2">
+            <div class="field"><label>Nome</label><input class="input" x-model="restaurantModal.name" required></div>
+            <div class="field"><label>Tipo de cozinha</label><input class="input" x-model="restaurantModal.segment"></div>
+            <div class="field"><label>Cidade</label><input class="input" x-model="restaurantModal.city"></div>
+            <div class="field"><label>Site de pedidos</label><input class="input" type="url" x-model="restaurantModal.siteUrl" placeholder="Em branco: site de demonstração"></div>
+            <div class="field"><label>Telefone</label><input class="input" x-model="restaurantModal.phone"></div>
+            <div class="field"><label>Instagram</label><input class="input" x-model="restaurantModal.instagram"></div>
+            <div class="field"><label>Endereço</label><input class="input" x-model="restaurantModal.address"></div>
+            <div class="field"><label>Horário</label><input class="input" x-model="restaurantModal.hours"></div>
+            <div class="field" style="grid-column:1/-1"><label>Frase do site</label><input class="input" x-model="restaurantModal.tagline"></div>
+            <div class="field"><label>Cor</label><input class="input" type="color" style="padding:3px;height:40px" x-model="restaurantModal.color"></div>
+            <div class="field"><label>Cupom padrão</label><input class="input" x-model="restaurantModal.coupon" style="text-transform:uppercase"></div>
+          </div>
+        </div>
+        <div x-show="restaurantTab==='estrategia'" class="stack">
+          <div class="field"><label>Público</label><textarea class="textarea" style="min-height:76px" x-model="restaurantModal.audience" placeholder="Quem compra, de onde, em que dias e horários"></textarea></div>
+          <div class="field"><label>Produtos principais</label><textarea class="textarea" style="min-height:66px" x-model="restaurantModal.products"></textarea></div>
+          <div class="field"><label>Objetivos</label><textarea class="textarea" style="min-height:66px" x-model="restaurantModal.goals"></textarea></div>
+          <div class="field"><label>Jeito de falar</label><input class="input" x-model="restaurantModal.tone"></div>
+        </div>
+        <div x-show="restaurantTab==='cardapio'" class="stack">
+          <template x-for="(m, i) in restaurantModal.menu" :key="m.id">
+            <div class="menu-edit">
+              <input class="input" x-model="m.category" placeholder="Categoria">
+              <div style="display:grid;gap:6px"><input class="input" x-model="m.name" placeholder="Item"><input class="input" x-model="m.description" placeholder="Descrição"></div>
+              <input class="input" x-model="m.price" placeholder="Preço" inputmode="decimal">
+              <button class="btn btn-ghost btn-icon" @click="restaurantModal.menu.splice(i,1)" x-html="icon('trash',15)" aria-label="Remover item"></button>
+            </div>
+          </template>
+          <button class="btn btn-sm" style="justify-self:start" @click="addMenuItem">Adicionar item</button>
+        </div>
+      </div>
+      <div class="modal-foot" style="justify-content:space-between">
+        <div><template x-if="restaurantModal.id"><button class="btn btn-danger btn-sm" @click="deleteRestaurant(restaurantModal)">Excluir</button></template></div>
+        <div class="row"><button class="btn btn-ghost" @click="restaurantModal=null">Cancelar</button><button class="btn btn-dark" @click="saveRestaurant">Salvar</button></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template x-if="contactModal">
+  <div class="overlay" @keydown.escape.window="contactModal=null" @click.self="contactModal=null">
+    <form class="modal" role="dialog" aria-modal="true" @submit.prevent="saveContact">
+      <div class="modal-head"><h2 x-text="contactModal.id ? 'Editar contato' : 'Novo contato'"></h2><button type="button" class="btn btn-ghost btn-icon" @click="contactModal=null" x-html="icon('x')" aria-label="Fechar"></button></div>
+      <div class="modal-body">
+        <template x-if="!contactModal.id">
+          <div class="field"><label>Restaurante</label><select class="select" x-model="contactModal.restaurantId"><template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id===contactModal.restaurantId"></option></template></select></div>
+        </template>
+        <div class="grid-2">
+          <div class="field"><label>Nome</label><input class="input" x-model="contactModal.name"></div>
+          <div class="field"><label>WhatsApp</label><input class="input" required x-model="contactModal.phone" placeholder="(31) 99999-9999" inputmode="tel"></div>
+        </div>
+        <div class="field"><label>Tags</label><input class="input" x-model="contactModal.tagsText" placeholder="vip, almoco"><span class="hint">Separadas por vírgula.</span></div>
+        <div class="field"><label>Como autorizou</label><input class="input" x-model="contactModal.optInSource" placeholder="Ex.: cadastro no balcão"></div>
+        <label class="check"><input type="checkbox" x-model="contactModal.optIn"> O cliente autorizou receber mensagens</label>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn btn-ghost" @click="contactModal=null">Cancelar</button><button class="btn btn-dark">Salvar</button></div>
+    </form>
+  </div>
+</template>
+
+<template x-if="importModal">
+  <div class="overlay" @keydown.escape.window="importModal=null" @click.self="importModal=null">
+    <div class="modal modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>Importar contatos</h2><button class="btn btn-ghost btn-icon" @click="importModal=null" x-html="icon('x')" aria-label="Fechar"></button></div>
+      <template x-if="!importModal.result">
+        <div class="modal-body">
+          <div class="grid-2">
+            <div class="field"><label>Restaurante</label><select class="select" x-model="importModal.restaurantId"><template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id===importModal.restaurantId"></option></template></select></div>
+            <div class="field"><label>Arquivo CSV</label><input class="input" type="file" accept=".csv,.txt" @change="readImportFile"></div>
+          </div>
+          <div class="field">
+            <label>Ou cole a lista</label>
+            <textarea class="textarea mono" x-model="importModal.text" placeholder="nome;telefone;tags&#10;Marina Souza;31999990000;vip|almoco"></textarea>
+            <span class="hint">Colunas: nome, telefone e tags (opcional). Separadas por ponto e vírgula, vírgula ou tab.</span>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label>Tag para todos</label><input class="input" x-model="importModal.tags" placeholder="ex.: lista-balcao"></div>
+            <div class="field"><label>Como autorizaram</label><input class="input" x-model="importModal.source"></div>
+          </div>
+          <template x-if="importRows.length">
+            <div class="card">
+              <div class="card-head"><b x-text="`${importRows.length} contatos na lista`"></b><span class="small muted">primeiras linhas</span></div>
+              <table class="table"><tbody><template x-for="r in importRows.slice(0,5)"><tr><td x-text="r.name || '—'"></td><td class="num" x-text="r.phone"></td><td x-text="r.tags.join(', ')"></td></tr></template></tbody></table>
+            </div>
+          </template>
+          <label class="check"><input type="checkbox" x-model="importModal.consent"><span class="small">Confirmo que esses clientes autorizaram receber mensagens do restaurante (LGPD).</span></label>
+        </div>
+      </template>
+      <template x-if="importModal.result">
+        <div class="modal-body">
+          <p style="margin:0"><b x-text="importModal.result.created"></b> contatos novos, <span x-text="importModal.result.updated"></span> atualizados e <span x-text="importModal.result.invalid.length"></span> ignorados.</p>
+          <template x-if="importModal.result.invalid.length">
+            <ul class="small" style="margin:0;color:var(--danger)"><template x-for="i in importModal.result.invalid.slice(0,8)"><li x-text="`${i.row.name || ''} ${i.row.phone || ''}: ${i.error}`"></li></template></ul>
+          </template>
+        </div>
+      </template>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" @click="importModal=null" x-text="importModal.result ? 'Fechar' : 'Cancelar'"></button>
+        <template x-if="!importModal.result"><button class="btn btn-dark" :disabled="!importRows.length || !importModal.consent || importModal.loading" @click="runImport"><span class="spin" x-show="importModal.loading"></span> Importar</button></template>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template x-if="confirmBox">
+  <div class="overlay" style="z-index:80" @keydown.escape.window="confirmBox=null" @click.self="confirmBox=null">
+    <div class="modal" style="width:min(430px,100%)" role="alertdialog" aria-modal="true">
+      <div class="modal-head"><h2 style="font-size:19px" x-text="confirmBox.title"></h2></div>
+      <div class="modal-body"><p style="margin:0" class="muted" x-text="confirmBox.text"></p></div>
+      <div class="modal-foot"><button class="btn btn-ghost" @click="confirmBox=null">Voltar</button><button class="btn btn-dark" :disabled="confirmBox.busy" @click="runConfirm"><span class="spin" x-show="confirmBox.busy"></span><span x-text="confirmBox.cta"></span></button></div>
+    </div>
+  </div>
+</template>
+
+<div class="toasts" aria-live="polite">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="toast" :class="t.kind"><strong x-show="t.title" x-text="t.title"></strong><span x-text="t.text"></span></div>
+  </template>
+</div>
+</body>
+</html>

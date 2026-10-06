@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cardápio · Pedido online</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lobster&family=Solway:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <script src="/t.js"></script>
+  <script defer src="/vendor/alpine.js"></script>
+  <style>
+    body { background: #fbf8f3; }
+    .demo-bar { background: #1d1710; color: #d9cbb8; font-size: 12.5px; padding: 6px 16px; text-align: center; }
+    .wrap { width: min(820px, 100% - 32px); margin: 0 auto; }
+    .head { background: var(--c); color: #fff; padding: 40px 0 34px; }
+    .head .row { gap: 18px; }
+    .head .mono-mark { width: 64px; height: 64px; border: 2px solid rgba(255,255,255,.7); border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 22px; flex: none; }
+    .head h1 { color: #fff; font-size: clamp(28px, 5vw, 42px); }
+    .head p { margin: 4px 0 0; opacity: .85; }
+    .head .meta { margin-top: 18px; font-size: 13.5px; opacity: .8; display: flex; gap: 6px 22px; flex-wrap: wrap; }
+    .hello { border-bottom: 1px solid var(--line); background: #fff; }
+    .hello .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; flex-wrap: wrap; font-size: 14.5px; }
+    .coupon { border: 1.5px dashed var(--c); color: var(--c); padding: 4px 12px; font-weight: 800; letter-spacing: .06em; font-size: 13.5px; }
+    .cats { position: sticky; top: 0; background: #fbf8f3; border-bottom: 1px solid var(--line); z-index: 5; }
+    .cats .wrap { display: flex; gap: 22px; overflow-x: auto; }
+    .cats a { padding: 12px 0; white-space: nowrap; color: var(--ink-2); text-decoration: none; font-weight: 600; font-size: 14px; }
+    .cats a:hover { color: var(--c); }
+    main { padding: 10px 0 120px; }
+    main h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .14em; color: var(--c); margin: 34px 0 6px; }
+    .item { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; padding: 16px 0; border-bottom: 1px solid var(--line); align-items: start; }
+    .item h3 { font-size: 17px; }
+    .item p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+    .item .side { display: grid; justify-items: end; gap: 8px; }
+    .item .price { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .item .add { --bg: #fff; --fg: var(--c); --bd: var(--c); }
+    .item .add:hover { --bg: var(--c); --fg: #fff; }
+    .qty-pill { font-size: 12.5px; color: var(--c); font-weight: 700; }
+    .fav { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--c); font-weight: 700; margin-left: 8px; }
+    .bag-bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--c); color: #fff; z-index: 20; }
+    .bag-bar button { width: 100%; background: none; border: 0; color: inherit; cursor: pointer; padding: 16px; font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; max-width: 820px; margin: 0 auto; }
+    .sheet { position: fixed; inset: auto 0 0 0; max-height: 90vh; overflow: auto; background: #fff; z-index: 70; padding: 22px; max-width: 560px; margin: 0 auto; border-radius: 12px 12px 0 0; }
+    .line { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: center; }
+    .qty { display: inline-flex; align-items: center; gap: 10px; }
+    .qty button { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line-2); background: #fff; cursor: pointer; font-weight: 700; }
+    .pay { --bg: var(--c); --fg: #fff; --bd: var(--c); width: 100%; }
+    footer.made { text-align: center; padding: 26px 16px 90px; color: var(--muted); font-size: 12.5px; display: grid; justify-items: center; gap: 6px; }
+    footer.made .logo { width: 70px; --logo-color: var(--brown); }
+  </style>
+</head>
+<body x-data="shop" x-cloak :style="`--c:${r?.color || '#73350c'}`">
+  <div class="demo-bar">Site de demonstração da Studio Coral. Os pedidos são fictícios e aparecem no painel.</div>
+
+  <template x-if="r">
+    <div>
+      <header class="head">
+        <div class="wrap">
+          <div class="row">
+            <span class="mono-mark" x-text="initials"></span>
+            <div><h1 x-text="r.name"></h1><p x-text="r.tagline"></p></div>
+          </div>
+          <div class="meta"><span x-show="r.address" x-text="r.address"></span><span x-show="r.hours" x-text="r.hours"></span><span x-show="r.phone" x-text="r.phone"></span></div>
+        </div>
+      </header>
+
+      <div class="hello">
+        <div class="wrap">
+          <span x-text="ref?.firstName ? `Olá, ${ref.firstName}. Seu cupom já está aplicado no pedido.` : 'Peça direto com a gente, sem taxa de aplicativo.'"></span>
+          <span class="coupon" x-show="coupon" x-text="coupon"></span>
+        </div>
+      </div>
+
+      <nav class="cats"><div class="wrap"><template x-for="c in categories" :key="c"><a :href="`#cat-${c}`" x-text="c"></a></template></div></nav>
+
+      <main class="wrap">
+        <template x-for="c in categories" :key="c">
+          <section :id="`cat-${c}`">
+            <h2 x-text="c"></h2>
+            <template x-for="m in r.menu.filter(i => (i.category || 'Cardápio') === c)" :key="m.id">
+              <article class="item">
+                <div><h3><span x-text="m.name"></span><span class="fav" x-show="m.highlight">mais pedido</span></h3><p x-text="m.description"></p></div>
+                <div class="side">
+                  <span class="price" x-text="money(m.price)"></span>
+                  <button class="btn btn-sm add" @click="add(m)">Adicionar</button>
+                  <span class="qty-pill" x-show="qtyOf(m)" x-text="`${qtyOf(m)} na sacola`"></span>
+                </div>
+              </article>
+            </template>
+          </section>
+        </template>
+      </main>
+
+      <footer class="made"><span>Site feito pela</span><span class="logo"></span></footer>
+
+      <div class="bag-bar" x-show="count && !open && !placed"><button @click="open=true"><span x-text="`Ver sacola (${count})`"></span><span x-text="money(total)"></span></button></div>
+    </div>
+  </template>
+
+  <template x-if="notFound"><div class="empty" style="min-height:70vh">Restaurante não encontrado.</div></template>
+
+  <template x-if="open">
+    <div>
+      <div class="overlay" @click="open=false"></div>
+      <div class="sheet">
+        <template x-if="!placed">
+          <form class="stack" @submit.prevent="checkout">
+            <div class="row between"><h2 style="font-size:20px">Sua sacola</h2><button type="button" class="btn btn-ghost btn-sm" @click="open=false">Fechar</button></div>
+            <div>
+              <template x-for="l in cart" :key="l.id">
+                <div class="line">
+                  <div><div x-text="l.name"></div><div class="small muted" x-text="money(l.price)"></div></div>
+                  <div class="qty"><button type="button" @click="dec(l)" aria-label="Menos">−</button><b x-text="l.qty"></b><button type="button" @click="l.qty++" aria-label="Mais">+</button></div>
+                </div>
+              </template>
+            </div>
+            <div class="line" x-show="discount"><span x-text="`Cupom ${coupon} (10%)`"></span><span x-text="'− ' + money(discount)"></span></div>
+            <div class="line" style="border:0"><b>Total</b><b style="font-size:20px" x-text="money(total)"></b></div>
+            <div class="grid-2">
+              <div class="field"><label>Nome</label><input class="input" x-model="customer" required></div>
+              <div class="field"><label>Receber</label><select class="select" x-model="delivery"><option>Entrega</option><option>Retirada no balcão</option></select></div>
+            </div>
+            <button class="btn btn-lg pay" :disabled="sending"><span class="spin" x-show="sending"></span> Fazer pedido</button>
+            <p class="tiny muted center" style="margin:0">Demonstração: nenhum pagamento é cobrado.</p>
+          </form>
+        </template>
+        <template x-if="placed">
+          <div class="stack center" style="padding:16px 0">
+            <h2>Pedido recebido</h2>
+            <p class="muted" style="margin:0" x-text="`Obrigado, ${customer}. Pedido ${placed}, total de ${money(total)}.`"></p>
+            <p class="small muted" style="margin:0" x-show="ref">Como você veio pelo WhatsApp, este pedido já aparece no relatório da campanha.</p>
+            <button class="btn" style="justify-self:center" @click="reset">Fazer outro pedido</button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('shop', () => ({
+    r: null, ref: null, notFound: false, cart: [], open: false, sending: false, placed: null, customer: '', delivery: 'Entrega',
+    async init() {
+      const slug = location.pathname.split('/').filter(Boolean).pop();
+      const res = await fetch(`/api/public/restaurants/${slug}`);
+      if (!res.ok) { this.notFound = true; return; }
+      this.r = await res.json();
+      document.title = `${this.r.name} · Pedido online`;
+      const code = window.StudioCoral?.ref();
+      if (code) {
+        const rr = await fetch(`/api/public/ref/${code}`);
+        if (rr.ok) { this.ref = await rr.json(); this.customer = this.ref.firstName || ''; }
+      }
+    },
+    get initials() { return this.r.name.split(/\s+/).filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); },
+    get coupon() { return this.ref?.coupon || this.r?.coupon || ''; },
+    get categories() { return [...new Set((this.r?.menu || []).map((m) => m.category || 'Cardápio'))]; },
+    get count() { return this.cart.reduce((s, l) => s + l.qty, 0); },
+    get subtotal() { return this.cart.reduce((s, l) => s + l.qty * l.price, 0); },
+    get discount() { return this.coupon ? Math.round(this.subtotal * 0.1 * 100) / 100 : 0; },
+    get total() { return Math.max(0, this.subtotal - this.discount); },
+    money: (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+    qtyOf(m) { return this.cart.find((x) => x.id === m.id)?.qty || 0; },
+    add(m) { const l = this.cart.find((x) => x.id === m.id); if (l) l.qty++; else this.cart.push({ id: m.id, name: m.name, price: Number(m.price), qty: 1 }); },
+    dec(l) { l.qty--; if (l.qty <= 0) this.cart = this.cart.filter((x) => x !== l); if (!this.cart.length) this.open = false; },
+    async checkout() {
+      this.sending = true;
+      const orderId = `PED-${Date.now().toString(36).toUpperCase()}`;
+      const items = this.cart.map((l) => ({ name: l.name, qty: l.qty, price: l.price }));
+      try {
+        const body = { ref: window.StudioCoral?.ref(), restaurantSlug: this.r.slug, value: this.total, orderId, items, customerName: this.customer };
+        await fetch('/api/public/conversions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        this.placed = orderId;
+      } finally { this.sending = false; }
+    },
+    reset() { this.cart = []; this.placed = null; this.open = false; },
+  }));
+});
+</script>
+</body>
+</html>

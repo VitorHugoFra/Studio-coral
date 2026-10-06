@@ -1,0 +1,23 @@
+{
+  "name": "studio-coral-disparos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Studio Coral — Etapa 1: plataforma de disparo de mensagens de marketing personalizadas para restaurantes (protótipo funcional).",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/seed.js --reset"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "alpinejs": "^3.14.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "optionalDependencies": {
+    "@wppconnect-team/wppconnect": "^2.3.4"
+  }
+}

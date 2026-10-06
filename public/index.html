@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio Coral · Campanhas de WhatsApp para restaurantes</title>
+  <meta name="description" content="Escrevemos, enviamos e medimos campanhas de WhatsApp para a base de clientes do seu restaurante, com pedido direto no seu site.">
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lobster&family=Solway:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <script defer src="/vendor/alpine.js"></script>
+  <style>
+    body { background: var(--sand); }
+    .wrap { width: min(1120px, 100% - 32px); margin: 0 auto; }
+    section { padding: clamp(56px, 8vw, 96px) 0; }
+    .h2 { font-size: clamp(28px, 3.8vw, 42px); color: var(--green); margin-bottom: 14px; }
+    .lead { font-size: 18px; color: var(--ink-2); max-width: 620px; margin: 0; }
+
+    header.top { position: absolute; inset: 0 0 auto; z-index: 5; padding: 22px 0; }
+    header.top .wrap { display: flex; align-items: center; gap: 28px; }
+    header.top .brand-lockup { font-size: 15px; --logo-color: #fff; }
+    header.top nav { display: flex; gap: 24px; margin-left: auto; }
+    header.top nav a { color: rgba(255, 255, 255, .85); text-decoration: none; font-size: 14.5px; }
+    header.top nav a:hover { color: #fff; text-decoration: underline; }
+    header.top .btn { --bg: transparent; --fg: #fff; --bd: rgba(255, 255, 255, .6); }
+
+    .hero { position: relative; background: var(--green) url('/brand/leaves.svg') center / cover; color: #fff; padding: 140px 0 90px; }
+    .hero .wrap { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 48px; align-items: center; }
+    .hero h1 { color: #fff; font-size: clamp(36px, 5vw, 58px); line-height: 1.05; letter-spacing: -.02em; max-width: 620px; }
+    .hero p { font-size: 18.5px; color: rgba(255, 255, 255, .85); max-width: 540px; margin: 22px 0 30px; }
+    .hero .ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+    .hero .btn-line { --bg: transparent; --fg: #fff; --bd: rgba(255, 255, 255, .55); }
+    .hero h1 em { font-style: normal; color: var(--yellow); }
+    .hero-phone { position: relative; justify-self: center; }
+    .float { position: absolute; z-index: 2; display: flex; align-items: center; gap: 12px; background: var(--white); color: var(--ink); border-radius: var(--r-lg); padding: 12px 18px 12px 12px; font-size: 13.5px; line-height: 1.3; box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .45); }
+    .float b { display: block; font-size: 17px; color: var(--green); }
+    .float .ic { width: 40px; height: 40px; border-radius: var(--r); display: grid; place-items: center; background: var(--yellow); color: var(--green); flex: none; }
+    .float .ic.dark { background: var(--green); color: var(--yellow); }
+    .float.f1 { left: -110px; top: -14px; }
+    .float.f2 { right: -76px; bottom: -22px; }
+    .hero .phone-screen { height: 540px; }
+
+    .blocks { display: grid; grid-template-columns: repeat(3, 1fr); }
+    .blocks article { padding: clamp(28px, 4vw, 48px); min-height: 330px; display: flex; flex-direction: column; gap: 14px; }
+    .blocks h3 { font-size: 24px; color: inherit; }
+    .blocks p { margin: 0; font-size: 15.5px; }
+    .blocks ul { margin: auto 0 0; padding: 0; list-style: none; font-size: 14px; display: grid; gap: 6px; }
+    .blocks li { border-top: 1px solid currentColor; padding-top: 6px; opacity: .9; }
+    .b-yellow { background: var(--yellow); color: var(--green); }
+    .b-green { background: var(--green); color: #f3e6cf; }
+    .b-green h3 { color: var(--yellow); }
+    .b-brown { background: var(--brown); color: #fbeedd; }
+    .b-brown h3 { color: var(--yellow); }
+
+    .steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 0 56px; margin-top: 36px; counter-reset: s; }
+    .steps li { list-style: none; display: grid; grid-template-columns: 48px 1fr; gap: 4px 12px; padding: 18px 0; border-top: 1px solid var(--line-2); }
+    .steps li::before { counter-increment: s; content: counter(s, decimal-leading-zero); grid-row: span 2; font-weight: 800; color: var(--brown); font-size: 20px; }
+    .steps b { font-size: 17px; color: var(--green); }
+    .steps span { color: var(--ink-2); font-size: 15px; }
+
+    .report { background: var(--paper); }
+    .report .wrap { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 48px; align-items: center; }
+    .report .card { overflow: hidden; }
+    .report .card .head { background: var(--green); color: #f3e6cf; padding: 14px 18px; display: flex; justify-content: space-between; font-size: 14px; }
+    .report .card .head b { color: #fff; }
+    .report table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+    .report td { padding: 11px 18px; border-bottom: 1px solid var(--line); }
+    .report td:last-child { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .report tr:last-child td { border-bottom: 0; background: var(--yellow); color: var(--green); }
+
+    .plans .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: start; }
+    .opt { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line-2); cursor: pointer; }
+    .opt input { width: 18px; height: 18px; accent-color: var(--green); margin-top: 3px; flex: none; }
+    .opt b { display: block; font-size: 16px; }
+    .opt small { color: var(--muted); font-size: 14px; }
+    .opt em { margin-left: auto; font-style: normal; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+    .plans form { background: var(--white); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 24px; display: grid; gap: 14px; }
+
+    .next { background: var(--green); color: #eadcc4; }
+    .next .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; }
+    .next .h2 { color: #fff; }
+    .next ul { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 32px; }
+    .next li { padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, .15); break-inside: avoid; }
+
+    footer { background: #061d02; color: rgba(234, 220, 196, .7); padding: 40px 0; font-size: 14px; }
+    footer .wrap { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+    footer .brand-lockup { font-size: 20px; }
+    footer a { color: var(--yellow); }
+
+    @media (max-width: 960px) {
+      .hero .wrap, .report .wrap, .plans .wrap, .next .wrap { grid-template-columns: 1fr; }
+      .hero-phone { display: none; }
+      .blocks { grid-template-columns: 1fr; }
+      .blocks article { min-height: 0; }
+      header.top nav { display: none; }
+    }
+    @media (max-width: 640px) {
+      .steps { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
+      .next ul { columns: 1; }
+      .hero { padding-top: 116px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a href="/" class="brand-lockup" aria-label="Studio Coral"><span class="studio">STUDIO</span><span class="logo"></span></a>
+      <nav><a href="#servicos">Serviços</a><a href="#como-funciona">Como funciona</a><a href="#proposta">Proposta</a></nav>
+      <a href="/app" class="btn btn-sm">Entrar</a>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <h1>Mensagens que trazem o cliente <em>de volta ao seu site</em>.</h1>
+        <p>A gente escreve, envia e acompanha as mensagens para a base de clientes do seu restaurante. Quem clica cai no seu site de pedidos, onde você não paga comissão de aplicativo.</p>
+        <div class="ctas">
+          <a href="#proposta" class="btn btn-primary btn-lg">Pedir uma proposta</a>
+          <a href="/demo/cantina-bella-nonna" class="btn btn-line btn-lg">Ver um site de exemplo</a>
+        </div>
+      </div>
+      <div class="hero-phone">
+      <div class="float f1"><span class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><div><b>Link único</b>por cliente</div></div>
+      <div class="float f2"><span class="ic dark"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 7h12l1 14H5z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg></span><div><b>Pedido no site</b>atribuído à campanha</div></div>
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="wa-top"><span class="wa-avatar" style="--c:#73350c">CB</span><div><div class="name">Cantina Bella Nonna</div><div class="sub">conta comercial</div></div></div>
+          <div class="wa-chat">
+            <span class="wa-day">HOJE</span>
+            <div class="wa-bubble"><div class="wa-text">Boa tarde, Marina! O cardápio de sexta da Cantina Bella Nonna já está no site.
+
+Pedindo por lá você usa o cupom <strong>NONNA10</strong> e não paga taxa de aplicativo.
+
+<a href="/demo/cantina-bella-nonna">studiocoral.app/r/a8Kq2x</a>
+
+<em>Responda SAIR para não receber mais mensagens.</em></div><div class="wa-meta"><span>17:42</span></div></div>
+            <div class="wa-bubble out"><div class="wa-text">vou querer a lasanha hoje</div><div class="wa-meta"><span>17:50</span><span class="ticks read">✓✓</span></div></div>
+          </div>
+          <div class="wa-input"><span>Mensagem</span><i>➤</i></div>
+        </div>
+      </div>
+      </div>
+    </div>
+  </section>
+  <div class="coral-band"></div>
+
+  <div class="blocks" id="servicos">
+    <article class="b-yellow">
+      <span class="label-up" style="color:var(--green)">Serviço principal</span>
+      <h3>Campanhas</h3>
+      <p>Mensagens pensadas para cada restaurante: o prato da semana, a data comemorativa, o cliente que sumiu. Só para quem autorizou receber.</p>
+      <ul><li>Texto e imagem da campanha</li><li>Envio para grupos da base (VIP, almoço, família…)</li><li>Relatório de leitura, clique e pedido</li></ul>
+    </article>
+    <article class="b-green">
+      <span class="label-up" style="color:rgba(234,220,196,.6)">Se o restaurante ainda não tiver</span>
+      <h3>Site de pedidos</h3>
+      <p>Cardápio, promoções e pedido online no endereço do próprio restaurante, feito para receber quem vem das campanhas.</p>
+      <ul><li>Cardápio com fotos e preços</li><li>Pedido para entrega ou retirada</li><li>Cupons das campanhas</li></ul>
+    </article>
+    <article class="b-brown">
+      <span class="label-up" style="color:rgba(251,238,221,.6)">Mensal</span>
+      <h3>Gestão do site</h3>
+      <p>Mantemos o site no ar, atualizado e cada vez mais fácil de comprar. Vale também para quem já tem site com outra empresa.</p>
+      <ul><li>Atualização de cardápio e preços</li><li>Ajustes a partir dos números</li><li>Suporte e manutenção</li></ul>
+    </article>
+  </div>
+
+  <section id="como-funciona">
+    <div class="wrap">
+      <h2 class="h2">Como funciona</h2>
+      <p class="lead">O mesmo processo para cada campanha, do primeiro contato com o restaurante até o relatório.</p>
+      <ol class="steps" style="padding:0">
+        <li><b>Diagnóstico</b><span>Conhecemos o restaurante, o cardápio, quem compra e o que o dono quer vender mais.</span></li>
+        <li><b>Planejamento</b><span>Definimos o calendário de campanhas do mês e a oferta de cada uma.</span></li>
+        <li><b>Criação</b><span>Escrevemos a mensagem e preparamos a imagem. O restaurante recebe um teste no celular antes do envio.</span></li>
+        <li><b>Segmentação</b><span>Separamos a base em grupos quando há dados: frequentes, inativos, almoço, fim de semana.</span></li>
+        <li><b>Envio</b><span>Mandamos só para quem autorizou, aos poucos e com variações no texto.</span></li>
+        <li><b>Clique</b><span>Cada cliente recebe um link próprio, que leva ao site de pedidos do restaurante.</span></li>
+        <li><b>Pedido</b><span>O cliente compra direto no site, sem aplicativo no meio.</span></li>
+        <li><b>Relatório</b><span>Mostramos quantos leram, clicaram e pediram, e quanto isso vendeu.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="report">
+    <div class="wrap">
+      <div>
+        <h2 class="h2">Você sabe quanto cada campanha vendeu.</h2>
+        <p class="lead">Como o link é individual, o pedido feito no site fica ligado à mensagem que o cliente recebeu. No fim de cada envio o restaurante recebe os números abaixo.</p>
+      </div>
+      <div class="card">
+        <div class="head"><b>Exemplo de relatório</b><span>Sexta de massas · 48 contatos</span></div>
+        <table>
+          <tr><td>Mensagens entregues</td><td>46</td></tr>
+          <tr><td>Lidas</td><td>37</td></tr>
+          <tr><td>Abriram o link</td><td>15</td></tr>
+          <tr><td>Fizeram pedido no site</td><td>6</td></tr>
+          <tr><td>Vendas</td><td>R$ 489,78</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="plans" id="proposta" x-data="{
+      opts: [
+        { id: 'campanhas', title: 'Campanhas de WhatsApp', desc: 'Planejamento, texto, imagem e envio', kind: 'mensal', on: true },
+        { id: 'datas', title: 'Campanhas de datas especiais', desc: 'Dia das Mães, Natal, aniversário da casa', kind: 'mensal', on: false },
+        { id: 'site', title: 'Site de pedidos', desc: 'Criação do site com cardápio e pedido online', kind: 'uma vez', on: false },
+        { id: 'gestao', title: 'Gestão do site', desc: 'Manutenção, atualizações e melhorias', kind: 'mensal', on: false },
+      ],
+      nome: '', cidade: '',
+      get mail() {
+        const itens = this.opts.filter(o => o.on).map(o => '- ' + o.title).join('\n');
+        const body = `Olá! Gostaria de uma proposta para:\n${itens}\n\nRestaurante: ${this.nome}\nCidade: ${this.cidade}`;
+        return 'mailto:contato@studiocoral.com.br?subject=' + encodeURIComponent('Proposta Studio Coral') + '&body=' + encodeURIComponent(body);
+      }
+    }">
+    <div class="wrap">
+      <div>
+        <h2 class="h2">Monte o seu pacote</h2>
+        <p class="lead">A contratação é mensal e você escolhe o que entra. O preço depende do tamanho da base e da quantidade de campanhas.</p>
+      </div>
+      <form @submit.prevent="location.href = mail">
+        <template x-for="o in opts" :key="o.id">
+          <label class="opt"><input type="checkbox" x-model="o.on"><span><b x-text="o.title"></b><small x-text="o.desc"></small></span><em x-text="o.kind"></em></label>
+        </template>
+        <div class="grid-2">
+          <div class="field"><label>Restaurante</label><input class="input" x-model="nome"></div>
+          <div class="field"><label>Cidade</label><input class="input" x-model="cidade"></div>
+        </div>
+        <button class="btn btn-dark btn-lg" :disabled="!opts.some(o => o.on)">Pedir proposta por e-mail</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="next">
+    <div class="wrap">
+      <div>
+        <span class="label-up" style="color:var(--yellow)">Próxima etapa</span>
+        <h2 class="h2" style="margin-top:8px">Telas e totens</h2>
+        <p class="lead" style="color:rgba(234,220,196,.85)">Depois das campanhas, vamos alugar e gerenciar telas interativas, com publicidade que o público pode tocar e usar.</p>
+      </div>
+      <ul>
+        <li>Totens de autoatendimento</li><li>Telas em carros de aplicativo</li><li>Cardápio em tablet</li><li>Retirada de ingressos em eventos</li><li>Publicidade interativa</li><li>Projetos sob encomenda</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <span class="brand-lockup"><span class="studio">STUDIO</span><span class="logo"></span></span>
+      <span><a href="/app">Área do cliente</a> · contato@studiocoral.com.br</span>
+    </div>
+  </footer>
+</body>
+</html>
