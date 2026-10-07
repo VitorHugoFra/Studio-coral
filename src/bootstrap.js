@@ -10,6 +10,8 @@ const { DispatchService } = require('./services/DispatchService');
 const { AnalyticsService } = require('./services/AnalyticsService');
 const { AuthService } = require('./services/AuthService');
 const { MediaService } = require('./services/MediaService');
+const { ReportService } = require('./services/ReportService');
+const { PdfService } = require('./services/PdfService');
 
 /**
  * Composição da aplicação (composition root).
@@ -23,10 +25,13 @@ function buildContainer(overrides = {}) {
   c.register('store', () => new JsonStore(path.join(config.dataDir, 'db.json')));
   c.register('repos', (x) => createRepositories(x.resolve('store')));
   c.register('events', () => new EventBus());
-  c.register('auth', (x) => new AuthService({ config: x.resolve('config') }));
+  c.register('auth', (x) => new AuthService({ config: x.resolve('config'), repos: x.resolve('repos') }));
   c.register('templates', (x) => new TemplateService({ settings: x.resolve('repos').settings }));
   c.register('media', (x) => new MediaService({ config: x.resolve('config') }));
   c.register('analytics', (x) => new AnalyticsService({ repos: x.resolve('repos') }));
+
+  c.register('reports', (x) => new ReportService({ repos: x.resolve('repos'), analytics: x.resolve('analytics') }));
+  c.register('pdf', (x) => new PdfService({ config: x.resolve('config'), auth: x.resolve('auth'), logger: x.resolve('logger') }));
 
   registerMessaging(c);
 

@@ -46,7 +46,7 @@ function createPublicRoutes(container) {
     if (!BOT_UA.test(req.headers['user-agent'] || '')) {
       const at = new Date().toISOString();
       repos.messages.update(message, { clicks: (message.clicks || 0) + 1, clickedAt: message.clickedAt || at, lastClickAt: at });
-      events.publish('click', { campaignId: message.campaignId, messageId: message.id, name: message.name });
+      events.publish('click', { campaignId: message.campaignId, restaurantId: message.restaurantId, messageId: message.id, name: message.name });
       events.publish('message:update', dispatch.publicMessage(message));
     }
     return res.redirect(302, destination.toString());
@@ -85,8 +85,8 @@ function createPublicRoutes(container) {
   router.get('/api/public/restaurants/:slug', cors, (req, res) => {
     const r = repos.restaurants.by('slug', req.params.slug);
     if (!r) return res.status(404).json({ error: 'Restaurante não encontrado' });
-    const { id, name, slug, tagline, segment, city, color, emoji, coupon, menu, address, hours, phone, instagram } = r;
-    return res.json({ id, name, slug, tagline, segment, city, color, emoji, coupon, menu, address, hours, phone, instagram });
+    const { id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners, logoUrl } = r;
+    return res.json({ id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners: banners || [], logoUrl: logoUrl || null });
   });
 
   router.get('/api/public/ref/:code', cors, (req, res) => {

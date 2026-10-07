@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relatório mensal · Studio Coral</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lobster&family=Solway:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <script defer src="/vendor/alpine.js"></script>
+  <style>
+    @page { size: A4; margin: 0; }
+    body { background: #d9d2c7; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.print { background: #fff; }
+    .bar { position: sticky; top: 0; z-index: 5; background: var(--green); color: #f3e6cf; display: flex; gap: 10px; align-items: center; padding: 10px 16px; flex-wrap: wrap; }
+    .bar .select { width: auto; min-height: 34px; }
+    .bar .grow { flex: 1; }
+    .pages { display: grid; gap: 18px; justify-content: center; padding: 22px 12px 60px; }
+    body.print .pages { padding: 0; gap: 0; }
+    .page { width: 210mm; min-height: 297mm; background: #fffdf9; position: relative; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.18); display: flex; flex-direction: column; }
+    body.print .page { box-shadow: none; page-break-after: always; break-after: page; }
+    .head { background: var(--green); color: #f3e6cf; padding: 12mm 14mm 10mm; display: flex; justify-content: space-between; align-items: flex-end; }
+    .head .brand-lockup { --logo-color: #fff; font-size: 16px; }
+    .head .t { text-align: right; }
+    .head .t b { display: block; color: var(--yellow); font-size: 13px; letter-spacing: .18em; text-transform: uppercase; }
+    .head .t span { font-size: 20px; color: #fff; font-weight: 700; }
+    .band { height: 6px; background: repeating-linear-gradient(90deg, var(--brown) 0 28px, var(--yellow) 28px 34px, var(--green) 34px 62px, var(--yellow) 62px 68px); }
+    .body { padding: 10mm 14mm 8mm; display: grid; gap: 8mm; align-content: start; flex: 1; }
+    .rest h1 { font-size: 30px; color: var(--green); }
+    .rest p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    .kpis { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .kpis > div { padding: 10px 12px; border-right: 1px solid var(--line); }
+    .kpis > div:last-child { border-right: 0; background: var(--green); }
+    .kpis .l { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; color: var(--muted); }
+    .kpis .v { font-size: 22px; font-weight: 800; color: var(--green); line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .kpis > div:last-child .l { color: rgba(243, 230, 207, .75); }
+    .kpis > div:last-child .v { color: var(--yellow); }
+    .delta { font-size: 11px; font-weight: 700; }
+    .up { color: var(--green-3); }
+    .down { color: var(--danger); }
+    .kpis > div:last-child .up { color: #9bd68a; }
+    .kpis > div:last-child .down { color: #ff9c86; }
+    .kpis > div:last-child .muted { color: rgba(243, 230, 207, .6); }
+    h2 { font-size: 15px; color: var(--green); margin-bottom: 8px; }
+    .summary { font-size: 14px; line-height: 1.65; color: var(--ink-2); margin: 0; }
+    .summary b { color: var(--ink); }
+    .two { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8mm; }
+    .chart { width: 100%; height: auto; display: block; }
+    .chart text { font-size: 9px; fill: #9a8570; font-family: var(--font); }
+    .funnel { display: grid; gap: 7px; font-size: 12px; }
+    .funnel .row { display: grid; grid-template-columns: 64px 1fr 40px; gap: 8px; align-items: center; }
+    .funnel .barx { height: 16px; background: var(--sand-2); position: relative; }
+    .funnel .barx span { position: absolute; inset: 0 auto 0 0; }
+    .funnel .barx b { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 10.5px; color: #fff; }
+    .funnel .barx.low b { left: auto; right: 6px; color: var(--ink); }
+    .funnel .pct { text-align: right; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    th { text-align: left; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 6px 8px; border-bottom: 1.5px solid var(--green); }
+    td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .thumb { width: 34px; height: 34px; border-radius: 4px; object-fit: cover; background: var(--sand-2); display: block; }
+    .cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; }
+    .box { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+    .box b.big { display: block; font-size: 22px; color: var(--green); }
+    .box span { font-size: 11.5px; color: var(--muted); }
+    .highlight { background: var(--yellow); color: var(--green); border-radius: 6px; padding: 12px 14px; font-size: 13.5px; }
+    .highlight b { font-size: 15px; }
+    .items li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; }
+    .items { list-style: none; margin: 0; padding: 0; }
+    .foot { padding: 6mm 14mm; font-size: 10px; color: var(--muted); display: flex; justify-content: space-between; border-top: 1px solid var(--line); }
+    .empty-month { text-align: center; padding: 40px 0; color: var(--muted); }
+    @media print { .bar { display: none; } }
+  </style>
+</head>
+<body x-data="report" :class="{ print: isPrint }">
+  <template x-if="!isPrint">
+    <div class="bar">
+      <a href="/app#/relatorios" class="btn btn-sm" style="--bg:transparent;--fg:#f3e6cf;--bd:rgba(255,255,255,.3)">← Voltar ao painel</a>
+      <span class="grow"></span>
+      <select class="select" x-model="month" @change="load()" aria-label="Mês">
+        <template x-for="m in months" :key="m"><option :value="m" x-text="labelOf(m)" :selected="m === month"></option></template>
+      </select>
+      <a class="btn btn-sm btn-primary" :href="`/api/reports/monthly.pdf?restaurantId=${restaurantId}&month=${month}`">Baixar PDF</a>
+      <button class="btn btn-sm" @click="window.print()">Imprimir</button>
+    </div>
+  </template>
+
+  <template x-if="error"><p class="center" style="padding:40px" x-text="error"></p></template>
+
+  <template x-if="r">
+    <div class="pages">
+      <!-- Página 1 -->
+      <section class="page">
+        <div class="head">
+          <span class="brand-lockup"><span class="studio">STUDIO</span><span class="logo"></span></span>
+          <div class="t"><b>Relatório mensal</b><span x-text="cap(r.monthLabel)"></span></div>
+        </div>
+        <div class="band"></div>
+        <div class="body">
+          <div class="rest"><h1 x-text="r.restaurant.name"></h1><p x-text="[r.restaurant.segment, r.restaurant.city].filter(Boolean).join(' · ')"></p></div>
+
+          <div class="kpis">
+            <template x-for="k in kpis" :key="k.label">
+              <div>
+                <div class="l" x-text="k.label"></div>
+                <div class="v" x-text="k.value"></div>
+                <div class="delta" :class="k.delta === null ? 'muted' : (k.delta >= 0 ? 'up' : 'down')" x-text="deltaText(k.delta)"></div>
+              </div>
+            </template>
+          </div>
+
+          <div>
+            <h2>Resumo do mês</h2>
+            <p class="summary" x-html="summaryText"></p>
+          </div>
+
+          <template x-if="r.totals.sent">
+            <div class="two">
+              <div>
+                <h2>Dia a dia</h2>
+                <div x-html="chartSvg"></div>
+                <div class="small muted" style="margin-top:4px;display:flex;gap:14px"><span><i style="display:inline-block;width:10px;height:3px;background:#092b03;vertical-align:middle"></i> mensagens enviadas</span><span><i style="display:inline-block;width:8px;height:8px;background:#73350c;vertical-align:middle"></i> pedidos</span></div>
+              </div>
+              <div>
+                <h2>Da mensagem ao pedido</h2>
+                <div class="funnel">
+                  <template x-for="s in funnel" :key="s.label">
+                    <div class="row"><span x-text="s.label"></span><div class="barx" :class="{ low: s.width < 20 }"><span :style="`width:${s.width}%;background:${s.color}`"></span><b x-text="s.value"></b></div><span class="pct" x-text="s.rate + '%'"></span></div>
+                  </template>
+                </div>
+                <p class="small muted" style="margin:8px 0 0">Percentual em relação à etapa anterior.</p>
+              </div>
+            </div>
+          </template>
+          <template x-if="!r.totals.sent"><div class="empty-month">Nenhuma campanha foi enviada neste mês.</div></template>
+
+          <template x-if="r.best">
+            <div class="highlight">Campanha que mais vendeu: <b x-text="r.best.name"></b>, com <b x-text="r.best.orders"></b> pedidos e <b x-text="money(r.best.revenue)"></b> em vendas pelo site.</div>
+          </template>
+        </div>
+        <div class="foot"><span>Studio Coral · vitorhdepaula1@gmail.com</span><span>1 / 2</span></div>
+      </section>
+
+      <!-- Página 2 -->
+      <section class="page">
+        <div class="head" style="padding-top:8mm;padding-bottom:7mm">
+          <span class="brand-lockup" style="font-size:12px"><span class="studio">STUDIO</span><span class="logo"></span></span>
+          <div class="t"><span style="font-size:15px" x-text="`${r.restaurant.name} · ${cap(r.monthLabel)}`"></span></div>
+        </div>
+        <div class="band"></div>
+        <div class="body">
+          <div>
+            <h2>Campanhas do mês</h2>
+            <table>
+              <thead><tr><th x-show="hasMedia"></th><th>Campanha</th><th>Data</th><th class="n">Enviadas</th><th class="n">Lidas</th><th class="n">Cliques</th><th class="n">Pedidos</th><th class="n">Vendas</th></tr></thead>
+              <tbody>
+                <template x-for="c in r.campaigns" :key="c.id">
+                  <tr>
+                    <td style="width:42px" x-show="hasMedia"><template x-if="c.mediaUrl"><img class="thumb" :src="c.mediaUrl" alt=""></template><template x-if="!c.mediaUrl"><span class="thumb"></span></template></td>
+                    <td><b x-text="c.name"></b><div class="tiny muted" x-text="c.objective || ''"></div></td>
+                    <td x-text="dateOf(c.startedAt)"></td>
+                    <td class="n" x-text="c.stats.sent"></td>
+                    <td class="n" x-text="pct(c.stats.readRate)"></td>
+                    <td class="n" x-text="c.stats.clicked"></td>
+                    <td class="n" x-text="c.stats.orders"></td>
+                    <td class="n"><b x-text="money(c.stats.revenue)"></b></td>
+                  </tr>
+                </template>
+                <template x-if="!r.campaigns.length"><tr><td colspan="8" class="center muted" style="padding:18px">Sem campanhas neste mês.</td></tr></template>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="two">
+            <div>
+              <h2>Mais pedidos pelas campanhas</h2>
+              <ul class="items">
+                <template x-for="it in r.topItems" :key="it.name"><li><span x-text="it.name"></span><span><b x-text="`${it.qty}×`"></b> <span class="muted" x-text="money(it.revenue)"></span></span></li></template>
+                <template x-if="!r.topItems.length"><li class="muted">Sem pedidos no mês.</li></template>
+              </ul>
+            </div>
+            <div>
+              <h2>Quando mais pedem</h2>
+              <p class="summary" style="font-size:13px" x-text="weekdayText"></p>
+            </div>
+          </div>
+
+          <div>
+            <h2>Base de clientes</h2>
+            <div class="cards3">
+              <div class="box"><b class="big" x-text="r.base.authorized"></b><span>contatos autorizados hoje</span></div>
+              <div class="box"><b class="big" x-text="r.base.newThisMonth"></b><span>novos contatos no mês</span></div>
+              <div class="box"><b class="big" x-text="r.base.optOutsThisMonth"></b><span>pediram para sair da lista</span></div>
+            </div>
+          </div>
+
+          <div class="box" style="font-size:12px;color:var(--ink-2);line-height:1.6">
+            <b>Como os números são medidos.</b> Cada cliente recebe um link próprio. Um clique é contado quando a pessoa abre esse link, e um pedido é atribuído à campanha quando é feito no site do restaurante depois desse clique. Pedidos feitos por outros canais não entram neste relatório.
+          </div>
+        </div>
+        <div class="foot"><span x-text="`Gerado em ${new Date(r.generatedAt).toLocaleString('pt-BR')}`"></span><span>2 / 2</span></div>
+      </section>
+    </div>
+  </template>
+
+<script>
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+document.addEventListener('alpine:init', () => {
+  Alpine.data('report', () => {
+    const q = new URLSearchParams(location.search);
+    return {
+      restaurantId: q.get('restaurantId') || '',
+      month: q.get('month') || new Date().toISOString().slice(0, 7),
+      isPrint: q.get('print') === '1',
+      months: [],
+      r: null,
+      error: '',
+      async init() {
+        try {
+          const m = await fetch(`/api/reports/months?restaurantId=${this.restaurantId}`, { credentials: 'same-origin' });
+          if (m.status === 401) { location.href = '/app'; return; }
+          this.months = await m.json();
+          if (!this.months.includes(this.month)) this.months.unshift(this.month);
+        } catch { /* seletor opcional */ }
+        await this.load();
+      },
+      async load() {
+        delete document.body.dataset.ready;
+        const res = await fetch(`/api/reports/monthly?restaurantId=${this.restaurantId}&month=${this.month}`, { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) { this.error = data.error || 'Não foi possível gerar o relatório.'; return; }
+        this.r = data;
+        history.replaceState(null, '', `?restaurantId=${this.restaurantId}&month=${this.month}${this.isPrint ? '&print=1' : ''}`);
+        await document.fonts.ready;
+        await Promise.all([...document.images].map((img) => (img.complete ? null : new Promise((ok) => { img.onload = ok; img.onerror = ok; }))));
+        this.$nextTick(() => { document.body.dataset.ready = '1'; });
+      },
+      labelOf(m) { const [y, mm] = m.split('-'); return `${MONTHS[Number(mm) - 1]} de ${y}`; },
+      cap: (s) => s.charAt(0).toUpperCase() + s.slice(1),
+      get hasMedia() { return this.r.campaigns.some((c) => c.mediaUrl); },
+      money: (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+      pct: (v) => `${String(Math.round((v || 0) * 10) / 10).replace('.', ',')}%`,
+      dateOf: (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+      deltaText(d) { if (d === null || d === undefined) return 'sem comparação'; return `${d >= 0 ? '▲' : '▼'} ${String(Math.abs(d)).replace('.', ',')}% vs mês anterior`; },
+      get kpis() {
+        const t = this.r.totals; const c = this.r.change;
+        return [
+          { label: 'Enviadas', value: t.sent, delta: c.sent },
+          { label: 'Lidas', value: this.pct(t.readRate), delta: null },
+          { label: 'Cliques', value: t.clicked, delta: c.clicked },
+          { label: 'Pedidos', value: t.orders, delta: c.orders },
+          { label: 'Vendas', value: this.money(t.revenue), delta: c.revenue },
+        ];
+      },
+      get summaryText() {
+        const r = this.r; const t = r.totals;
+        if (!t.sent) return `Em ${r.monthLabel} não houve envios de campanha para a base do ${r.restaurant.name}.`;
+        const n = r.campaigns.length;
+        let s = `Em ${r.monthLabel}, ${n === 1 ? 'uma campanha foi enviada' : `<b>${n} campanhas</b> foram enviadas`} para <b>${t.sent} clientes</b>. `;
+        s += `${t.read} leram a mensagem, <b>${t.clicked}</b> abriram o link e <b>${t.orders}</b> fizeram pedido pelo site, somando <b>${this.money(t.revenue)}</b>`;
+        s += t.orders ? `, com ticket médio de ${this.money(t.ticket)}.` : '.';
+        if (r.change.revenue !== null) s += ` As vendas ${r.change.revenue >= 0 ? 'cresceram' : 'caíram'} ${String(Math.abs(r.change.revenue)).replace('.', ',')}% em relação ao mês anterior.`;
+        if (r.base.optOutsThisMonth) s += ` ${r.base.optOutsThisMonth} ${r.base.optOutsThisMonth === 1 ? 'pessoa pediu para sair da lista e não recebe' : 'pessoas pediram para sair da lista e não recebem'} mais mensagens.`;
+        return s;
+      },
+      get weekdayText() {
+        const w = this.r.bestWeekday;
+        if (!w) return 'Ainda não há pedidos suficientes para comparar os dias da semana.';
+        const day = ['sábado', 'domingo'].includes(w.name) ? `no ${w.name}` : `na ${w.name}-feira`;
+        return `Os pedidos vindos do WhatsApp se concentraram ${day}: ${w.orders} ${w.orders === 1 ? 'pedido' : 'pedidos'}, somando ${this.money(w.revenue)}.`;
+      },
+      get funnel() {
+        const t = this.r.totals; const base = Math.max(1, t.sent);
+        const rows = [['Enviadas', t.sent, '#092b03'], ['Entregues', t.delivered, '#092b03'], ['Lidas', t.read, '#2f6421'], ['Cliques', t.clicked, '#d99a00'], ['Pedidos', t.orders, '#73350c']];
+        return rows.map(([label, value, color], i) => ({ label, value, color, width: (value / base) * 100, rate: i ? (rows[i - 1][1] ? Math.round((value / rows[i - 1][1]) * 100) : 0) : 100 }));
+      },
+      get chartSvg() {
+        const d = this.r.daily; const W = 420; const H = 150; const P = { l: 22, r: 6, t: 8, b: 18 };
+        const maxS = Math.max(4, ...d.map((x) => x.sent)); const maxO = Math.max(2, ...d.map((x) => x.orders));
+        const x = (i) => P.l + (i + 0.5) * ((W - P.l - P.r) / d.length);
+        const bw = Math.max(2, ((W - P.l - P.r) / d.length) * 0.55);
+        let s = `<svg class="chart" viewBox="0 0 ${W} ${H}">`;
+        for (let g = 0; g <= 2; g += 1) { const y = H - P.b - (g / 2) * (H - P.t - P.b); s += `<line x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}" stroke="#e3d2bf"/><text x="${P.l - 4}" y="${y + 3}" text-anchor="end">${Math.round((maxS * g) / 2)}</text>`; }
+        d.forEach((v, i) => {
+          if (v.orders) { const h = (v.orders / maxO) * (H - P.t - P.b) * 0.6; s += `<rect x="${x(i) - bw / 2}" y="${H - P.b - h}" width="${bw}" height="${h}" fill="#73350c"/>`; }
+          if ((i + 1) % 5 === 1) s += `<text x="${x(i)}" y="${H - 5}" text-anchor="middle">${v.day}</text>`;
+        });
+        s += `<path d="${d.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${(H - P.b - (v.sent / maxS) * (H - P.t - P.b)).toFixed(1)}`).join('')}" fill="none" stroke="#092b03" stroke-width="1.6"/>`;
+        return `${s}</svg>`;
+      },
+    };
+  });
+});
+</script>
+</body>
+</html>

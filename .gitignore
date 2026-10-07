@@ -1,3 +1,6 @@
 node_modules/
 data/
 .env
+
+# Fonte com licença só para uso pessoal: não redistribuir
+public/fonts/hemgjord-lettering.*

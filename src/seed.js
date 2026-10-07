@@ -6,6 +6,7 @@
  *   npm run seed   → apaga a base e recria os dados de demonstração
  */
 const crypto = require('crypto');
+const { AuthService } = require('./services/AuthService');
 
 const DAY = 864e5;
 const FIRST = ['Marina', 'Lucas', 'Ana', 'Pedro', 'Juliana', 'Rafael', 'Camila', 'Bruno', 'Larissa', 'Thiago', 'Beatriz', 'Gustavo', 'Fernanda', 'Diego', 'Patrícia', 'Felipe', 'Aline', 'Rodrigo', 'Carolina', 'Mateus', 'Letícia', 'André', 'Gabriela', 'Vinícius', 'Isabela', 'Leonardo', 'Natália', 'Eduardo', 'Mariana', 'Henrique', 'Sofia', 'Daniel', 'Renata', 'Caio', 'Vanessa', 'Igor'];
@@ -72,6 +73,19 @@ const RESTAURANTS = [
   },
 ];
 
+// Ilustrações geradas por scripts/gerar-ilustracoes.js
+const IMAGES = {
+  m1: 'nonna-lasanha', m2: 'nonna-funghi', m3: 'nonna-nhoque', m4: 'nonna-carbonara', m5: 'nonna-bruschetta', m6: 'nonna-tiramisu', m7: 'nonna-vinho',
+  n1: 'minas-tropeiro', n2: 'minas-frango', n3: 'minas-fitness', n4: 'minas-paodequeijo', n5: 'minas-docedeleite', n6: 'minas-suco',
+};
+const BANNERS = { 'cantina-bella-nonna': ['nonna-banner-1', 'nonna-banner-2'], 'sabor-de-minas': ['minas-banner-1', 'minas-banner-2'] };
+
+// Acessos de demonstração dos restaurantes (senha mínima de 8 caracteres)
+const RESTAURANT_USERS = {
+  'cantina-bella-nonna': { name: 'Giulia Rossi', email: 'giulia@bellanonna.com.br', password: 'bellanonna' },
+  'sabor-de-minas': { name: 'Seu Geraldo', email: 'geraldo@sabordeminas.com.br', password: 'sabordeminas' },
+};
+
 const TAG_POOL = [['vip'], ['inativo'], ['familia'], ['casal'], ['almoco'], ['fim-de-semana'], ['aniversariante'], []];
 
 function seed(repos, { reset = false } = {}) {
@@ -85,7 +99,17 @@ function seed(repos, { reset = false } = {}) {
   const iso = (t) => new Date(t).toISOString();
 
   RESTAURANTS.forEach((data, ri) => {
-    const restaurant = repos.restaurants.create({ ...data, demo: true });
+    const restaurant = repos.restaurants.create({
+      ...data,
+      demo: true,
+      requireApproval: true,
+      menu: data.menu.map((it) => ({ ...it, image: IMAGES[it.id] ? `/demo-assets/${IMAGES[it.id]}.svg` : '' })),
+      banners: (BANNERS[data.slug] || []).map((b) => `/demo-assets/${b}.svg`),
+    });
+    const login = RESTAURANT_USERS[data.slug];
+    if (login) {
+      repos.users.create({ restaurantId: restaurant.id, role: 'restaurant', name: login.name, email: login.email, passwordHash: AuthService.hashPassword(login.password) });
+    }
 
     // Contatos fictícios
     const contacts = [];
@@ -131,6 +155,7 @@ function seed(repos, { reset = false } = {}) {
         segment: { tags: [], match: 'any' },
         includeFooter: true,
         status: 'completed',
+        approval: { status: 'approved', decidedBy: RESTAURANT_USERS[data.slug].name, decidedAt: iso(start - DAY / 2) },
         provider: 'simulator',
         audienceSize: eligible.length,
         startedAt: iso(start),
@@ -198,6 +223,11 @@ function seed(repos, { reset = false } = {}) {
       segment: { tags: ri === 0 ? ['vip'] : ['familia', 'fim-de-semana'], match: 'any' },
       includeFooter: true,
       status: 'draft',
+      // A da Cantina já foi enviada para o restaurante aprovar
+      ...(ri === 0 ? {
+        approval: { status: 'pending', requestedAt: iso(now - 3 * 3600e3), requestedBy: 'Equipe Studio Coral' },
+        approvalLog: [{ action: 'requested', by: 'Equipe Studio Coral', at: iso(now - 3 * 3600e3), note: 'Menu degustação de outubro. Confere se o cupom está certo?' }],
+      } : {}),
     });
   });
 

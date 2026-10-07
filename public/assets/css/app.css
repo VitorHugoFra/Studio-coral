@@ -2,7 +2,7 @@
 .shell { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100vh; }
 
 .sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--green); color: #eadcc4; z-index: 40; }
-.sidebar .brand-lockup { font-size: 15px; margin: 24px 0 26px 22px; align-self: flex-start; }
+.sidebar .brand-lockup { --logo-color: #fff; font-size: 15px; margin: 24px 0 26px 22px; align-self: flex-start; }
 .nav { display: grid; }
 .nav-label { font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; color: rgba(234, 220, 196, .45); padding: 0 22px; margin: 14px 0 6px; font-weight: 700; }
 .nav a { display: flex; align-items: center; gap: 11px; padding: 9px 22px; color: rgba(250, 240, 222, .8); text-decoration: none; font-size: 14.5px; border-left: 3px solid transparent; }
@@ -85,7 +85,9 @@
 .seg button + button { border-left: 1px solid var(--line-2); }
 .seg button.on { background: var(--green); color: #fff; }
 
-.menu-edit { display: grid; grid-template-columns: 120px minmax(0, 1fr) 100px 34px; gap: 8px; align-items: start; }
+.menu-edit { display: grid; grid-template-columns: 64px 120px minmax(0, 1fr) 100px 34px; gap: 8px; align-items: start; }
+.menu-photo { width: 64px; height: 64px; border-radius: var(--r); border: 1px dashed var(--line-2); background: #fff; display: grid; place-items: center; cursor: pointer; overflow: hidden; color: var(--muted); }
+.menu-photo img { width: 100%; height: 100%; object-fit: cover; }
 
 /* ── Campanhas ────────────────────────────────────────────── */
 .filters { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid var(--line); overflow-x: auto; }
@@ -152,7 +154,7 @@
 /* Login */
 .login-wrap { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
 .login-art { background: var(--green) url('/brand/leaves.svg') center / cover; display: grid; place-items: center; padding: 40px; }
-.login-art .brand-lockup { font-size: 46px; }
+.login-art .brand-lockup { --logo-color: #fff; font-size: 46px; }
 .login-form { display: grid; place-items: center; padding: 40px 20px; }
 .login-form form { width: min(360px, 100%); display: grid; gap: 16px; }
 .login-form h1 { font-size: 26px; color: var(--green); }
@@ -184,3 +186,12 @@
   .summary dd { margin-bottom: 8px; }
   .topbar .select { min-width: 0; width: 100%; }
 }
+
+/* ── Aprovação e relatórios ───────────────────────────────── */
+.approval-callout { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; border-left: 4px solid var(--yellow); }
+.approval-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 26px; align-items: start; }
+.approval-box.pending { border-color: var(--yellow); }
+.approval-box.approved { border-color: var(--green-3); }
+.approval-box.changes { border-color: var(--danger); }
+.report-frame { width: 100%; height: 1150px; border: 1px solid var(--line); border-radius: var(--r-lg); background: #fff; }
+@media (max-width: 1080px) { .approval-grid { grid-template-columns: 1fr; } }

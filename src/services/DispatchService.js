@@ -84,6 +84,7 @@ class DispatchService {
     if (!campaign.message?.trim()) throw new Error('Escreva a mensagem antes de disparar.');
     const restaurant = this.repos.restaurants.get(campaign.restaurantId);
     if (!restaurant) throw new Error('Restaurante não encontrado.');
+    this.assertApproved(campaign, restaurant);
 
     const contacts = this.audience(campaign.restaurantId, campaign.segment);
     if (!contacts.length) throw new Error('Nenhum contato autorizado corresponde a esta segmentação.');
@@ -118,6 +119,7 @@ class DispatchService {
   schedule(campaignId, when) {
     const campaign = this.mustGet(campaignId);
     if (!['draft', 'scheduled'].includes(campaign.status)) throw new Error('Esta campanha já foi iniciada.');
+    this.assertApproved(campaign, this.repos.restaurants.get(campaign.restaurantId));
     const date = new Date(when);
     if (Number.isNaN(date.getTime()) || date.getTime() < Date.now() - 60000) throw new Error('Escolha uma data futura.');
     this.repos.campaigns.update(campaign, { status: 'scheduled', scheduledAt: date.toISOString() });
@@ -167,6 +169,13 @@ class DispatchService {
         this.repos.campaigns.update(c, { status: 'draft', lastError: err.message });
         this.publishProgress(c.id);
       }
+    }
+  }
+
+  /** Restaurantes com aprovação ligada só recebem campanhas aprovadas por eles. */
+  assertApproved(campaign, restaurant) {
+    if (restaurant?.requireApproval !== false && campaign.approval?.status !== 'approved') {
+      throw new Error('Esta campanha precisa ser aprovada pelo restaurante antes do envio.');
     }
   }
 
@@ -376,7 +385,7 @@ class DispatchService {
   publishProgress(campaignId) {
     const campaign = this.repos.campaigns.get(campaignId);
     if (!campaign) return;
-    this.events.publish('campaign:progress', { id: campaignId, status: campaign.status, waitingReason: campaign.waitingReason || null });
+    this.events.publish('campaign:progress', { id: campaignId, restaurantId: campaign.restaurantId, status: campaign.status, waitingReason: campaign.waitingReason || null });
   }
 }
 

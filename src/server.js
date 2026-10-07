@@ -56,7 +56,7 @@ app.listen(config.port, () => {
 const shutdown = async () => {
   container.resolve('store').flush();
   // Fecha o navegador do WPPConnect mantendo a sessão salva
-  await Promise.race([messaging.stop().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+  await Promise.race([Promise.all([messaging.stop().catch(() => {}), container.resolve('pdf').close()]), new Promise((r) => setTimeout(r, 3000))]);
   process.exit(0);
 };
 process.on('SIGINT', shutdown);

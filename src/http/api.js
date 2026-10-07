@@ -2,6 +2,8 @@ const express = require('express');
 const { TemplateService } = require('../services/TemplateService');
 const { MessagingProvider } = require('../messaging/MessagingProvider');
 const { CAMPAIGN_IDEAS } = require('../ideas');
+const { AuthService } = require('../services/AuthService');
+const { ReportService } = require('../services/ReportService');
 
 const slugify = (s) => String(s || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -11,7 +13,7 @@ const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj[k] !== und
 const cleanTags = (tags) => [...new Set((Array.isArray(tags) ? tags : String(tags || '').split(','))
   .map((t) => String(t).trim().toLowerCase()).filter(Boolean))];
 
-const RESTAURANT_FIELDS = ['name', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'menu', 'tagline', 'instagram', 'emoji', 'address', 'hours'];
+const RESTAURANT_FIELDS = ['name', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'menu', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'requireApproval', 'banners', 'logoUrl'];
 const CAMPAIGN_FIELDS = ['name', 'restaurantId', 'objective', 'occasion', 'message', 'mediaUrl', 'destinationUrl', 'coupon', 'segment', 'includeFooter', 'cloudTemplate', 'notes'];
 
 /** Rotas autenticadas do painel (/api/*). */
@@ -25,6 +27,8 @@ function createApi(container) {
   const events = container.resolve('events');
   const config = container.resolve('config');
   const media = container.resolve('media');
+  const reports = container.resolve('reports');
+  const pdf = container.resolve('pdf');
 
   const router = express.Router();
   const wrap = (fn) => (req, res) => Promise.resolve().then(() => fn(req, res)).catch((err) => res.status(err.status || 400).json({ error: err.message }));
@@ -39,17 +43,52 @@ function createApi(container) {
   router.post('/auth/logout', (req, res) => { auth.clearCookie(res); res.json({ ok: true }); });
 
   router.use(auth.middleware());
+
+  /*
+   * Usuários de restaurante só alcançam estas rotas; dentro delas os dados
+   * ficam sempre presos ao restaurante do usuário (ver scopeOf e ownCampaign).
+   */
+  const RESTAURANT_ROUTES = [
+    ['GET', /^\/(auth\/me|events|dashboard|meta|settings|restaurants|campaigns|reports\/months|reports\/monthly|reports\/monthly\.pdf)$/],
+    ['GET', /^\/campaigns\/[^/]+(\/messages)?$/],
+    ['POST', /^\/campaigns\/[^/]+\/(approve|request-changes)$/],
+    ['PUT', /^\/me\/password$/],
+  ];
+  router.use((req, res, next) => {
+    if (req.user.role !== 'restaurant') return next();
+    const ok = RESTAURANT_ROUTES.some(([m, re]) => m === req.method && re.test(req.path));
+    return ok ? next() : res.status(403).json({ error: 'Seu acesso não permite esta ação.' });
+  });
+  const isRestaurant = (req) => req.user.role === 'restaurant';
+  const scopeOf = (req, fallback) => (isRestaurant(req) ? req.user.restaurantId : (fallback || null));
+  const ownCampaign = (req) => {
+    const c = repos.campaigns.get(req.params.id);
+    if (!c || (isRestaurant(req) && c.restaurantId !== req.user.restaurantId)) {
+      throw Object.assign(new Error('Campanha não encontrada'), { status: 404 });
+    }
+    return c;
+  };
+
   router.get('/auth/me', (req, res) => res.json({ user: req.user }));
+
+  router.put('/me/password', wrap((req, res) => {
+    if (!isRestaurant(req)) throw new Error('A senha da agência é definida no arquivo .env.');
+    const user = repos.users.get(req.user.userId);
+    if (!AuthService.checkPassword(req.body?.current || '', user.passwordHash)) throw new Error('Senha atual incorreta.');
+    AuthService.validatePassword(req.body?.password);
+    repos.users.update(user, { passwordHash: AuthService.hashPassword(req.body.password) });
+    res.json({ ok: true });
+  }));
 
   // ── Tempo real ─────────────────────────────────────────────
   router.get('/events', (req, res) => {
-    events.attach(req, res);
-    res.write(`event: messaging:status\ndata: ${JSON.stringify(messaging.getStatus())}\n\n`);
+    events.attach(req, res, { restaurantId: scopeOf(req) });
+    if (!isRestaurant(req)) res.write(`event: messaging:status\ndata: ${JSON.stringify(messaging.getStatus())}\n\n`);
   });
 
   // ── Painel ─────────────────────────────────────────────────
   router.get('/dashboard', (req, res) => {
-    res.json(analytics.overview({ restaurantId: req.query.restaurantId || null, days: Number(req.query.days) || 14 }));
+    res.json(analytics.overview({ restaurantId: scopeOf(req, req.query.restaurantId), days: Number(req.query.days) || 14 }));
   });
 
   router.get('/meta', (req, res) => {
@@ -66,8 +105,42 @@ function createApi(container) {
   });
 
   router.get('/restaurants', (req, res) => {
-    res.json(repos.restaurants.all().slice().sort((a, b) => a.name.localeCompare(b.name)).map(withCounts));
+    const list = repos.restaurants.all().filter((r) => !isRestaurant(req) || r.id === req.user.restaurantId);
+    res.json(list.slice().sort((a, b) => a.name.localeCompare(b.name)).map(withCounts));
   });
+
+  // ── Acessos dos restaurantes (gerenciados pela agência) ────
+  const publicUser = ({ passwordHash, ...u }) => u;
+
+  router.get('/restaurants/:id/users', (req, res) => {
+    res.json(repos.users.filter((u) => u.restaurantId === req.params.id).map(publicUser));
+  });
+
+  router.post('/restaurants/:id/users', wrap((req, res) => {
+    if (!repos.restaurants.get(req.params.id)) throw new Error('Restaurante não encontrado.');
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Informe um e-mail válido.');
+    if (email === config.admin.email.toLowerCase() || repos.users.by('email', email)) throw new Error('Este e-mail já tem acesso.');
+    AuthService.validatePassword(req.body?.password);
+    const user = repos.users.create({
+      restaurantId: req.params.id,
+      name: String(req.body?.name || '').trim() || email,
+      email,
+      role: 'restaurant',
+      passwordHash: AuthService.hashPassword(req.body.password),
+    });
+    res.status(201).json(publicUser(user));
+  }));
+
+  router.put('/users/:id/password', wrap((req, res) => {
+    const user = repos.users.get(req.params.id);
+    if (!user) throw Object.assign(new Error('Usuário não encontrado.'), { status: 404 });
+    AuthService.validatePassword(req.body?.password);
+    repos.users.update(user, { passwordHash: AuthService.hashPassword(req.body.password) });
+    res.json({ ok: true });
+  }));
+
+  router.delete('/users/:id', (req, res) => res.json({ ok: repos.users.remove(req.params.id) }));
 
   router.get('/restaurants/:id', wrap((req, res) => {
     const r = repos.restaurants.get(req.params.id);
@@ -107,6 +180,7 @@ function createApi(container) {
     repos.messages.removeWhere((m) => m.restaurantId === id);
     repos.conversions.removeWhere((c) => c.restaurantId === id);
     repos.campaigns.removeWhere((c) => c.restaurantId === id);
+    repos.users.removeWhere((u) => u.restaurantId === id);
     repos.restaurants.remove(id);
     res.json({ ok: true });
   }));
@@ -207,28 +281,31 @@ function createApi(container) {
   });
 
   router.get('/campaigns', (req, res) => {
+    const scope = scopeOf(req, req.query.restaurantId);
     const list = repos.campaigns
-      .filter((c) => !req.query.restaurantId || c.restaurantId === req.query.restaurantId)
+      .filter((c) => !scope || c.restaurantId === scope)
+      // o restaurante não vê rascunhos internos da agência, só o que foi para aprovação ou enviado
+      .filter((c) => !isRestaurant(req) || c.approval || !['draft'].includes(c.status))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
       .map(campaignView);
     res.json(list);
   });
 
   router.get('/campaigns/:id', wrap((req, res) => {
-    const c = repos.campaigns.get(req.params.id);
-    if (!c) throw Object.assign(new Error('Campanha não encontrada'), { status: 404 });
+    const c = ownCampaign(req);
     res.json({
       ...campaignView(c),
       audiencePreview: ['draft', 'scheduled'].includes(c.status) ? dispatch.audience(c.restaurantId, c.segment).length : c.audienceSize,
     });
   }));
 
-  router.get('/campaigns/:id/messages', (req, res) => {
+  router.get('/campaigns/:id/messages', wrap((req, res) => {
+    const c = ownCampaign(req);
     const list = repos.messages
-      .filter((m) => m.campaignId === req.params.id)
+      .filter((m) => m.campaignId === c.id)
       .map((m) => dispatch.publicMessage(m));
     res.json(list);
-  });
+  }));
 
   const normalizeCampaign = (body) => {
     const data = pick(body || {}, CAMPAIGN_FIELDS);
@@ -259,7 +336,16 @@ function createApi(container) {
     const c = repos.campaigns.get(req.params.id);
     if (!c) throw Object.assign(new Error('Campanha não encontrada'), { status: 404 });
     if (!['draft', 'scheduled'].includes(c.status)) throw new Error('Campanhas já disparadas não podem ser editadas. Duplique-a.');
-    res.json(campaignView(repos.campaigns.update(c, normalizeCampaign(req.body))));
+    const data = normalizeCampaign(req.body);
+    // Mudou o que o cliente final recebe? Então a aprovação do restaurante deixa de valer.
+    const CONTENT = ['message', 'mediaUrl', 'coupon', 'destinationUrl', 'segment', 'includeFooter', 'restaurantId'];
+    const changed = CONTENT.some((k) => data[k] !== undefined && JSON.stringify(data[k]) !== JSON.stringify(c[k]));
+    if (changed && c.approval) {
+      data.approval = null;
+      data.approvalLog = [...(c.approvalLog || []), { action: 'reset', by: req.user.name, at: new Date().toISOString(), note: 'Conteúdo alterado pela agência' }];
+      if (c.status === 'scheduled') { data.status = 'draft'; data.scheduledAt = null; }
+    }
+    res.json(campaignView(repos.campaigns.update(c, data)));
   }));
 
   router.delete('/campaigns/:id', wrap((req, res) => {
@@ -286,6 +372,46 @@ function createApi(container) {
     const { restaurantId, segment } = req.body || {};
     const list = dispatch.audience(restaurantId, { tags: cleanTags(segment?.tags), match: segment?.match });
     res.json({ count: list.length, sample: list.slice(0, 5).map((c) => ({ name: c.name, phone: c.phone })) });
+  }));
+
+  // ── Aprovação pelo restaurante ─────────────────────────────
+  const logApproval = (c, entry) => [...(c.approvalLog || []), { ...entry, at: new Date().toISOString() }];
+  const publishApproval = (c) => events.publish('approval', { id: c.id, restaurantId: c.restaurantId, name: c.name, approval: c.approval });
+
+  router.post('/campaigns/:id/request-approval', wrap((req, res) => {
+    const c = ownCampaign(req);
+    if (!['draft', 'scheduled'].includes(c.status)) throw new Error('Só campanhas não enviadas vão para aprovação.');
+    if (!c.message?.trim()) throw new Error('Escreva a mensagem antes de pedir aprovação.');
+    repos.campaigns.update(c, {
+      approval: { status: 'pending', requestedAt: new Date().toISOString(), requestedBy: req.user.name },
+      approvalLog: logApproval(c, { action: 'requested', by: req.user.name, note: req.body?.note || '' }),
+    });
+    publishApproval(c);
+    res.json(campaignView(c));
+  }));
+
+  router.post('/campaigns/:id/approve', wrap((req, res) => {
+    const c = ownCampaign(req);
+    if (c.approval?.status !== 'pending') throw new Error('Esta campanha não está aguardando aprovação.');
+    repos.campaigns.update(c, {
+      approval: { ...c.approval, status: 'approved', decidedAt: new Date().toISOString(), decidedBy: req.user.name, note: req.body?.note || '' },
+      approvalLog: logApproval(c, { action: 'approved', by: req.user.name, note: req.body?.note || '' }),
+    });
+    publishApproval(c);
+    res.json(campaignView(c));
+  }));
+
+  router.post('/campaigns/:id/request-changes', wrap((req, res) => {
+    const c = ownCampaign(req);
+    if (c.approval?.status !== 'pending') throw new Error('Esta campanha não está aguardando aprovação.');
+    const note = String(req.body?.note || '').trim();
+    if (!note) throw new Error('Conte o que precisa mudar.');
+    repos.campaigns.update(c, {
+      approval: { ...c.approval, status: 'changes', decidedAt: new Date().toISOString(), decidedBy: req.user.name, note },
+      approvalLog: logApproval(c, { action: 'changes', by: req.user.name, note }),
+    });
+    publishApproval(c);
+    res.json(campaignView(c));
   }));
 
   router.post('/campaigns/:id/start', wrap((req, res) => res.json(campaignView(dispatch.start(req.params.id)))));
@@ -357,7 +483,32 @@ function createApi(container) {
   }));
 
   // ── Configurações ──────────────────────────────────────────
-  router.get('/settings', (req, res) => res.json(repos.settings.get()));
+  router.get('/settings', (req, res) => {
+    const s = repos.settings.get();
+    res.json(isRestaurant(req) ? { footer: s.footer } : s);
+  });
+
+  // ── Relatório mensal ───────────────────────────────────────
+  const reportScope = (req) => {
+    const restaurantId = scopeOf(req, req.query.restaurantId);
+    if (!restaurantId) throw new Error('Escolha o restaurante.');
+    return restaurantId;
+  };
+  router.get('/reports/months', wrap((req, res) => res.json(reports.availableMonths(reportScope(req)))));
+  router.get('/reports/monthly', wrap((req, res) => {
+    res.json(reports.monthly({ restaurantId: reportScope(req), month: req.query.month || ReportService.currentMonth() }));
+  }));
+  router.get('/reports/monthly.pdf', wrap(async (req, res) => {
+    const restaurantId = reportScope(req);
+    const month = req.query.month || ReportService.currentMonth();
+    const report = reports.monthly({ restaurantId, month }); // valida antes de abrir o navegador
+    const file = await pdf.render(`/relatorio?restaurantId=${restaurantId}&month=${month}&print=1`, req.user);
+    const slug = repos.restaurants.get(restaurantId).slug;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="relatorio-${slug}-${month}.pdf"`);
+    res.end(file);
+    return report;
+  }));
   router.put('/settings', wrap((req, res) => {
     const b = req.body || {};
     const patch = {};

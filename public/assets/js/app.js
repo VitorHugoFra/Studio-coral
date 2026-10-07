@@ -40,6 +40,7 @@ const fmt = {
   },
 };
 
+const APPROVAL = { pending: 'Aguardando aprovação', approved: 'Aprovada', changes: 'Ajustes pedidos' };
 const STATUS = { draft: 'Rascunho', scheduled: 'Agendada', sending: 'Enviando', paused: 'Pausada', completed: 'Concluída', canceled: 'Cancelada' };
 const MSG_STATUS = { queued: 'Na fila', sending: 'Enviando', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falhou', skipped: 'Ignorada' };
 const CONN = { disconnected: 'Desconectado', starting: 'Conectando…', qr: 'Aguardando QR Code', connected: 'Conectado', error: 'Erro' };
@@ -126,7 +127,7 @@ function trendChart(series, hover) {
 // ── Componente principal ───────────────────────────────────
 document.addEventListener('alpine:init', () => {
   Alpine.data('coral', () => ({
-    fmt, STATUS, MSG_STATUS, CONN, OBJECTIVES, EMOJIS, waFormat,
+    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, OBJECTIVES, EMOJIS, waFormat,
     icon: (name, size) => window.icon(name, size),
 
     booted: false,
@@ -164,6 +165,11 @@ document.addEventListener('alpine:init', () => {
     detailFilter: { status: '', search: '' },
 
     outbox: [],
+    users: [],
+    newUser: null,
+    reportState: { restaurantId: '', month: '', months: [] },
+    approvalNote: '',
+    passwordModal: null,
     uploads: [],
     uploading: false,
     dragOver: false,
@@ -205,15 +211,19 @@ document.addEventListener('alpine:init', () => {
       this.user = null;
     },
 
+    get isRestaurant() { return this.user?.role === 'restaurant'; },
+
     async afterLogin() {
-      const [meta, restaurants, status, settings] = await Promise.all([
-        api('/meta'), api('/restaurants'), api('/messaging/status'), api('/settings'),
-      ]);
+      const [meta, restaurants, settings] = await Promise.all([api('/meta'), api('/restaurants'), api('/settings')]);
       this.meta = meta;
       this.restaurants = restaurants;
-      this.applyStatus(status);
       this.settings = settings;
-      if (this.scope && !restaurants.find((r) => r.id === this.scope)) this.scope = '';
+      if (this.isRestaurant) {
+        this.scope = this.user.restaurantId;
+      } else {
+        this.applyStatus(await api('/messaging/status'));
+        if (this.scope && !restaurants.find((r) => r.id === this.scope)) this.scope = '';
+      }
       this.openEvents();
       if (!location.hash) location.hash = '#/painel';
       await this.onRoute();
@@ -244,6 +254,14 @@ document.addEventListener('alpine:init', () => {
       es.addEventListener('conversion', (e) => {
         const c = JSON.parse(e.data);
         this.toast(`${c.customerName || 'Cliente'}, ${fmt.money(c.value)} em ${c.restaurant}.`, 'Pedido no site');
+        this.softRefresh();
+      });
+      es.addEventListener('approval', (e) => {
+        const d = JSON.parse(e.data);
+        const st = d.approval?.status;
+        if (this.isRestaurant && st === 'pending') this.toast(`“${d.name}” está esperando sua aprovação.`, 'Nova campanha para aprovar');
+        if (!this.isRestaurant && st === 'approved') this.toast(`O restaurante aprovou “${d.name}”.`, 'Campanha aprovada');
+        if (!this.isRestaurant && st === 'changes') this.toast(`O restaurante pediu ajustes em “${d.name}”: ${d.approval.note}`, 'Ajustes pedidos');
         this.softRefresh();
       });
       es.addEventListener('incoming', (e) => {
@@ -284,7 +302,12 @@ document.addEventListener('alpine:init', () => {
 
     async onRoute() {
       const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
-      const [name = 'painel', id, action] = parts;
+      let [name = 'painel', id, action] = parts;
+      const RESTAURANT_PAGES = ['painel', 'campanhas', 'relatorios'];
+      if (this.isRestaurant && (!RESTAURANT_PAGES.includes(name) || id === 'nova' || action === 'editar')) {
+        name = 'painel'; id = undefined; action = undefined;
+        history.replaceState(null, '', '#/painel');
+      }
       this.route = { name, params: { id, action } };
       this.detail = null;
       this.editor = null;
@@ -297,7 +320,7 @@ document.addEventListener('alpine:init', () => {
       const { name, params } = this.route;
       if (!silent) this.loading = true;
       try {
-        if (name === 'painel') await this.loadDashboard();
+        if (name === 'painel') { await this.loadDashboard(); if (this.isRestaurant) await this.loadCampaigns(); }
         if (name === 'restaurantes') this.restaurants = await api('/restaurants');
         if (name === 'contatos') await this.loadContacts();
         if (name === 'campanhas') {
@@ -311,6 +334,7 @@ document.addEventListener('alpine:init', () => {
           if (!silent) this.outbox = await api('/messaging/outbox');
         }
         if (name === 'configuracoes' && !silent) this.settings = await api('/settings');
+        if (name === 'relatorios' && !silent) await this.loadReports();
       } catch (err) {
         if (!silent) this.error(err);
       } finally {
@@ -319,6 +343,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     setScope(id) {
+      if (this.isRestaurant) return;
       this.scope = id;
       localStorage.setItem('sc_scope', id);
       this.loadRoute();
@@ -376,11 +401,12 @@ document.addEventListener('alpine:init', () => {
 
     // ── Restaurantes ───────────────────────────────────────
     blankRestaurant() {
-      return { name: '', segment: '', city: '', siteUrl: '', phone: '', address: '', hours: '', instagram: '', tagline: '', emoji: '🍽️', color: '#73350c', coupon: '', audience: '', products: '', goals: '', tone: '', menu: [] };
+      return { name: '', segment: '', city: '', siteUrl: '', phone: '', address: '', hours: '', instagram: '', tagline: '', color: '#73350c', coupon: '', audience: '', products: '', goals: '', tone: '', menu: [], banners: [], requireApproval: true };
     },
 
     editRestaurant(r) {
       this.restaurantTab = 'diagnostico';
+      this.loadUsers(r?.id).catch(() => {});
       this.restaurantModal = JSON.parse(JSON.stringify(r || this.blankRestaurant()));
     },
 
@@ -481,6 +507,22 @@ document.addEventListener('alpine:init', () => {
     },
 
     // ── Campanhas ──────────────────────────────────────────
+    /** Situação exibida: antes do envio, o que importa é a aprovação. */
+    campaignLabel(c) {
+      if (['draft', 'scheduled'].includes(c.status) && c.approval) {
+        const a = APPROVAL[c.approval.status];
+        return c.status === 'scheduled' ? `Agendada · ${a.toLowerCase()}` : a;
+      }
+      return STATUS[c.status];
+    },
+    campaignClass(c) {
+      if (['draft', 'scheduled'].includes(c.status) && c.approval) return { pending: 'sending', approved: 'completed', changes: 'failed' }[c.approval.status];
+      return c.status;
+    },
+    get pendingApprovals() {
+      return this.campaigns.filter((c) => c.approval?.status === 'pending' && ['draft', 'scheduled'].includes(c.status));
+    },
+
     async loadCampaigns() {
       this.campaigns = await api(`/campaigns${this.scope ? `?restaurantId=${this.scope}` : ''}`);
     },
@@ -489,16 +531,19 @@ document.addEventListener('alpine:init', () => {
       const f = this.campaignFilter;
       if (f === 'all') return this.campaigns;
       if (f === 'active') return this.campaigns.filter((c) => ['sending', 'scheduled', 'paused'].includes(c.status));
+      if (f === 'approval') return this.pendingApprovals;
       return this.campaigns.filter((c) => c.status === f);
     },
 
     campaignCount(f) {
       if (f === 'all') return this.campaigns.length;
       if (f === 'active') return this.campaigns.filter((c) => ['sending', 'scheduled', 'paused'].includes(c.status)).length;
+      if (f === 'approval') return this.pendingApprovals.length;
       return this.campaigns.filter((c) => c.status === f).length;
     },
 
     openCampaign(c) {
+      if (this.isRestaurant) { this.go(`#/campanhas/${c.id}`); return; }
       this.go(['draft', 'scheduled'].includes(c.status) ? `#/campanhas/${c.id}/editar` : `#/campanhas/${c.id}`);
     },
 
@@ -638,6 +683,9 @@ document.addEventListener('alpine:init', () => {
           this.route = { name: 'campanhas', params: { id: saved.id, action: 'editar' } };
         }
         e.form.status = saved.status;
+        if (e.form.approval && !saved.approval) this.toast('O conteúdo mudou, então a campanha precisa ser aprovada de novo.', 'Aprovação reiniciada');
+        e.form.approval = saved.approval || null;
+        e.form.approvalLog = saved.approvalLog || [];
         if (!quiet) this.toast('Rascunho salvo.');
         return true;
       } catch (err) { this.error(err); return false; } finally { e.saving = false; }
@@ -676,9 +724,28 @@ document.addEventListener('alpine:init', () => {
       return `≈ ${(secs / 3600).toFixed(1).replace('.', ',')} horas`;
     },
 
+    get needsApproval() {
+      const e = this.editor;
+      return !!e && this.editorRestaurant?.requireApproval !== false && e.form.approval?.status !== 'approved';
+    },
+
+    async requestApproval() {
+      const e = this.editor;
+      if (!e.form.message?.trim()) { this.error(new Error('Escreva a mensagem antes de pedir aprovação.')); return; }
+      if (!(await this.saveCampaign(true))) return;
+      try {
+        const c = await api(`/campaigns/${e.form.id}/request-approval`, { method: 'POST', body: { note: this.approvalNote } });
+        e.form.approval = c.approval;
+        e.form.approvalLog = c.approvalLog;
+        this.approvalNote = '';
+        this.toast(`O restaurante já pode aprovar a campanha entrando no painel com o acesso dele.`, 'Enviada para aprovação');
+      } catch (err) { this.error(err); }
+    },
+
     async launch() {
       const e = this.editor;
       if (!(await this.saveCampaign(true))) return;
+      if (this.needsApproval) { this.error(new Error('A campanha precisa ser aprovada pelo restaurante antes do envio.')); return; }
       if (e.scheduling) {
         if (!e.scheduledAt) { this.error(new Error('Escolha a data e hora do envio.')); return; }
         try {
@@ -753,6 +820,26 @@ document.addEventListener('alpine:init', () => {
       } catch (err) { this.error(err); } finally { this.uploading = false; }
     },
 
+    /** Foto de item do cardápio (aparece no site de pedidos do restaurante). */
+    async uploadMenuImage(item, file) {
+      if (!file) return;
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { this.error(new Error('Use imagens JPG, PNG ou WEBP.')); return; }
+      try {
+        const dataUrl = await this.shrink(file);
+        const saved = await api('/uploads', { method: 'POST', body: { name: file.name, dataUrl } });
+        item.image = saved.url;
+      } catch (err) { this.error(err); }
+    },
+
+    async uploadBanner(file) {
+      if (!file) return;
+      try {
+        const dataUrl = await this.shrink(file);
+        const saved = await api('/uploads', { method: 'POST', body: { name: file.name, dataUrl } });
+        this.restaurantModal.banners = [...(this.restaurantModal.banners || []), saved.url];
+      } catch (err) { this.error(err); }
+    },
+
     onDrop(ev) {
       this.dragOver = false;
       this.uploadImage(ev.dataTransfer?.files?.[0]);
@@ -761,9 +848,27 @@ document.addEventListener('alpine:init', () => {
     // ── Detalhe da campanha ────────────────────────────────
     async loadDetail(id, silent) {
       const [c, msgs] = await Promise.all([api(`/campaigns/${id}`), api(`/campaigns/${id}/messages`)]);
-      if (!silent && ['draft', 'scheduled'].includes(c.status)) { this.go(`#/campanhas/${id}/editar`); return; }
+      if (!silent && !this.isRestaurant && ['draft', 'scheduled'].includes(c.status)) { this.go(`#/campanhas/${id}/editar`); return; }
       this.detail = c;
       this.detailMessages = msgs;
+    },
+
+    get isApprovalView() {
+      return !!this.detail && ['draft', 'scheduled'].includes(this.detail.status);
+    },
+
+    async decide(action) {
+      const note = this.approvalNote.trim();
+      if (action === 'request-changes' && !note) { this.error(new Error('Escreva o que precisa mudar.')); return; }
+      try {
+        this.detail = { ...this.detail, ...(await api(`/campaigns/${this.detail.id}/${action}`, { method: 'POST', body: { note } })) };
+        this.approvalNote = '';
+        this.toast(action === 'approve' ? 'Obrigado! A Studio Coral já pode enviar a campanha.' : 'Pedido de ajuste enviado para a Studio Coral.', action === 'approve' ? 'Campanha aprovada' : 'Ajustes pedidos');
+      } catch (err) { this.error(err); }
+    },
+
+    approvalText(entry) {
+      return { requested: 'enviou para aprovação', approved: 'aprovou', changes: 'pediu ajustes', reset: 'alterou o conteúdo (aprovação reiniciada)' }[entry.action] || entry.action;
     },
 
     get filteredMessages() {
@@ -785,8 +890,8 @@ document.addEventListener('alpine:init', () => {
       const d = this.detail;
       if (!d) return '';
       const m = this.detailMessages.find((x) => x.sentAt) || this.detailMessages[0];
-      const name = m?.name || 'Cliente';
-      const vars = { nome: name, primeiro_nome: name.split(' ')[0], restaurante: d.restaurant, cupom: d.coupon || '', link: `${this.meta.publicUrl}/r/${m?.code || ''}` };
+      const name = m?.name || 'Marina Souza';
+      const vars = { nome: name, primeiro_nome: name.split(' ')[0], restaurante: d.restaurant, cupom: d.coupon || '', link: `${this.meta.publicUrl}/r/${m?.code || 'a8Kq2x'}` };
       let text = renderTemplate(d.message, vars);
       if (!/\{\{\s*link\s*\}\}/.test(d.message)) text += `\n\n${vars.link}`;
       if (d.includeFooter !== false && this.settings.footer) text += `\n\n_${this.settings.footer}_`;
@@ -825,6 +930,60 @@ document.addEventListener('alpine:init', () => {
         this.go('#/campanhas');
         await this.loadCampaigns();
       });
+    },
+
+    // ── Acessos do restaurante ─────────────────────────────
+    async loadUsers(restaurantId) {
+      this.users = restaurantId ? await api(`/restaurants/${restaurantId}/users`) : [];
+      this.newUser = null;
+    },
+    async addUser() {
+      const u = this.newUser;
+      try {
+        await api(`/restaurants/${this.restaurantModal.id}/users`, { method: 'POST', body: u });
+        this.toast(`Acesso criado para ${u.email}. Passe a senha para o restaurante.`);
+        await this.loadUsers(this.restaurantModal.id);
+      } catch (err) { this.error(err); }
+    },
+    async resetPassword(u) {
+      const password = prompt(`Nova senha para ${u.email} (mínimo 8 caracteres):`);
+      if (!password) return;
+      try {
+        await api(`/users/${u.id}/password`, { method: 'PUT', body: { password } });
+        this.toast('Senha alterada.');
+      } catch (err) { this.error(err); }
+    },
+    removeUser(u) {
+      this.confirm(`Remover o acesso de ${u.email}?`, 'A pessoa deixa de entrar no painel na hora.', async () => {
+        await api(`/users/${u.id}`, { method: 'DELETE' });
+        await this.loadUsers(this.restaurantModal.id);
+      });
+    },
+    async changeOwnPassword() {
+      const m = this.passwordModal;
+      if (m.password !== m.confirm) { this.error(new Error('As senhas novas não são iguais.')); return; }
+      try {
+        await api('/me/password', { method: 'PUT', body: { current: m.current, password: m.password } });
+        this.passwordModal = null;
+        this.toast('Senha alterada.');
+      } catch (err) { this.error(err); }
+    },
+
+    // ── Relatórios ─────────────────────────────────────────
+    async loadReports() {
+      const st = this.reportState;
+      st.restaurantId = this.isRestaurant ? this.user.restaurantId : (st.restaurantId || this.scope || this.restaurants[0]?.id || '');
+      if (!st.restaurantId) return;
+      st.months = await api(`/reports/months?restaurantId=${st.restaurantId}`);
+      if (!st.months.includes(st.month)) st.month = st.months[0];
+    },
+    get reportQuery() {
+      return `restaurantId=${this.reportState.restaurantId}&month=${this.reportState.month}`;
+    },
+    monthLabel(m) {
+      if (!m) return '';
+      const [y, mm] = m.split('-');
+      return `${['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'][Number(mm) - 1]} de ${y}`;
     },
 
     // ── Conexão ────────────────────────────────────────────

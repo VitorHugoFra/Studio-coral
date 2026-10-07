@@ -4,15 +4,39 @@ const COOKIE = 'sc_session';
 const TTL = 1000 * 60 * 60 * 12; // 12h
 
 /**
- * Autenticação simples por cookie assinado (HMAC). Um único usuário
- * administrador definido no .env — suficiente para o protótipo.
+ * Autenticação por cookie assinado (HMAC).
+ *
+ *  • Agência: um administrador definido no .env (acesso total).
+ *  • Restaurante: usuários cadastrados pela agência, presos ao próprio
+ *    restaurante. Aprovam campanhas e veem apenas os próprios relatórios.
  */
 class AuthService {
-  constructor({ config }) {
+  constructor({ config, repos }) {
     this.admin = config.admin;
     this.secret = config.sessionSecret;
+    this.repos = repos;
   }
 
+  // ── Senhas ─────────────────────────────────────────────────
+  static hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+    return `scrypt:${salt}:${hash}`;
+  }
+
+  static checkPassword(password, stored) {
+    const [, salt, hash] = String(stored || '').split(':');
+    if (!salt || !hash) return false;
+    const test = crypto.scryptSync(String(password), salt, 64);
+    const expected = Buffer.from(hash, 'hex');
+    return expected.length === test.length && crypto.timingSafeEqual(expected, test);
+  }
+
+  static validatePassword(password) {
+    if (String(password || '').length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.');
+  }
+
+  // ── Sessão ─────────────────────────────────────────────────
   sign(payload) {
     const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
     const sig = crypto.createHmac('sha256', this.secret).update(body).digest('base64url');
@@ -38,10 +62,22 @@ class AuthService {
     return crypto.timingSafeEqual(ha, hb);
   }
 
+  /** Token de sessão para um usuário já identificado (usado também na geração do PDF). */
+  tokenFor(user) {
+    return this.sign({ ...user, exp: Date.now() + TTL });
+  }
+
   login(email, password) {
-    const ok = this.safeEqual(String(email).trim().toLowerCase(), this.admin.email.toLowerCase()) && this.safeEqual(password, this.admin.password);
-    if (!ok) return null;
-    return this.sign({ email: this.admin.email, name: this.admin.name, exp: Date.now() + TTL });
+    const mail = String(email).trim().toLowerCase();
+    if (this.safeEqual(mail, this.admin.email.toLowerCase()) && this.safeEqual(password, this.admin.password)) {
+      return this.tokenFor({ role: 'agency', email: this.admin.email, name: this.admin.name });
+    }
+    const user = this.repos.users.by('email', mail);
+    if (!user || !AuthService.checkPassword(password, user.passwordHash)) return null;
+    const restaurant = this.repos.restaurants.get(user.restaurantId);
+    if (!restaurant) return null;
+    this.repos.users.update(user, { lastLoginAt: new Date().toISOString() });
+    return this.tokenFor({ role: 'restaurant', userId: user.id, restaurantId: user.restaurantId, email: user.email, name: user.name, restaurant: restaurant.name });
   }
 
   readCookie(req) {
@@ -61,11 +97,16 @@ class AuthService {
   middleware() {
     return (req, res, next) => {
       const user = this.verify(this.readCookie(req));
-      if (!user) return res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
+      // Usuário de restaurante removido perde o acesso na hora
+      if (!user || (user.role === 'restaurant' && !this.repos.users.get(user.userId))) {
+        return res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
+      }
       req.user = user;
       return next();
     };
   }
 }
+
+AuthService.COOKIE = COOKIE;
 
 module.exports = { AuthService };

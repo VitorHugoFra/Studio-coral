@@ -110,9 +110,10 @@ function createRepositories(store) {
     campaigns: new Collection(store, 'campaigns'),
     messages: new Collection(store, 'messages', ['code', 'providerMessageId']),
     conversions: new Collection(store, 'conversions'),
+    users: new Collection(store, 'users', ['email']),
     settings: new SettingsRepo(store),
     reindexAll() {
-      [this.restaurants, this.contacts, this.campaigns, this.messages, this.conversions].forEach((c) => c.reindex());
+      [this.restaurants, this.contacts, this.campaigns, this.messages, this.conversions, this.users].forEach((c) => c.reindex());
     },
   };
 }

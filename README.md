@@ -8,7 +8,15 @@ Protótipo funcional do serviço de **disparo de mensagens de marketing personal
 | Painel da agência | `http://localhost:3000/app` |
 | Site próprio de demonstração do restaurante | `http://localhost:3000/demo/cantina-bella-nonna` |
 
-Login padrão: `admin@studiocoral.com.br` / `coral123` (definido em `.env`).
+| Relatório mensal (A4/PDF) | `http://localhost:3000/relatorio?restaurantId=…&month=AAAA-MM` |
+
+**Acessos de demonstração**
+
+| Perfil | E-mail | Senha |
+|---|---|---|
+| Agência (definido no `.env`) | `admin@studiocoral.com.br` | `coral123` |
+| Restaurante · Cantina Bella Nonna | `giulia@bellanonna.com.br` | `bellanonna` |
+| Restaurante · Sabor de Minas | `geraldo@sabordeminas.com.br` | `sabordeminas` |
 
 ![Página inicial](docs/prints/01-site-inicio.png)
 
@@ -50,6 +58,24 @@ ode-v20.20.2-win-x64`; o Node 16 do sistema não foi alterado.
 
 LGPD: a importação exige confirmar o consentimento. Quem responde **SAIR** é descadastrado automaticamente e recebe uma confirmação.
 
+## Acesso do restaurante e aprovação
+
+A agência cria o acesso em **Restaurantes → Editar diagnóstico → Acesso do restaurante**. Quem entra com esse acesso:
+
+- vê o painel e os relatórios **só do próprio restaurante**;
+- aprova campanhas ou pede ajustes (com comentário), vendo a mensagem como o cliente vai receber;
+- não vê contatos, outros restaurantes, conexão nem configurações (bloqueado também na API).
+
+Fluxo: a agência monta a campanha e clica em **Enviar para aprovação** (passo Envio). O envio fica bloqueado até o restaurante aprovar. Se a agência mudar texto, imagem, cupom, link ou público depois da aprovação, ela é zerada e precisa ser pedida de novo. Tudo fica registrado no histórico da campanha. A exigência pode ser desligada por restaurante.
+
+## Relatório mensal em PDF
+
+Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect, Node 18+), a partir da página `/relatorio`, com a sessão de quem pediu.
+
+## Site de pedidos do restaurante
+
+Layout de cardápio digital (`/demo/:slug`): carrossel de fotos, atalhos por seção, abas fixas por categoria, busca, itens com foto, detalhe com quantidade e observação, sacola. Fotos dos itens e do carrossel são enviadas na ficha do restaurante. As ilustrações dos restaurantes de demonstração são geradas por `node scripts/gerar-ilustracoes.js`.
+
 ## Imagens nas campanhas
 
 As imagens são enviadas pelo painel (JPG, PNG ou WEBP, até 5 MB; fotos grandes são reduzidas no navegador antes do envio), ficam em `data/uploads` e são servidas em `/uploads`. Cada canal recebe a imagem do jeito certo:
@@ -89,6 +115,6 @@ Para adicionar outro canal (Z-API, Twilio, SMS…), crie uma classe que estenda 
 - **Dados de demonstração**: os contatos são fictícios (DDD `00`) e estão marcados com `demo: true`. A fila **nunca** os envia por um canal real; com o WPPConnect ou a API Oficial, eles são ignorados.
 - **WPPConnect**: use um número dedicado, mantenha intervalos de envio naturais e envie só para a base autorizada. A automação do WhatsApp Web não é oficial e pode levar ao bloqueio do número.
 - **Links em produção**: `PUBLIC_URL` precisa ser um endereço público (HTTPS), para que os links abram no celular dos clientes.
-- **Fonte Hemgjord Lettering**: a fonte é licenciada. Coloque `hemgjord-lettering.woff2` em `public/fonts/`; até lá, a fonte *Lobster* é usada como alternativa.
+- **Fonte Hemgjord Lettering**: a versão gratuita é só para uso pessoal; para uso comercial é preciso comprar a licença. Coloque o arquivo como `public/fonts/hemgjord-lettering.otf` (ou `.woff2`). Ele fica fora do Git (`.gitignore`) para não ser redistribuído; sem ele, a fonte *Lobster* é usada.
 - **Logo**: extraído do PDF do manual (baixa resolução). Para mais nitidez, substitua `public/brand/coral-wordmark.png` e `coral-snake.png` pelos arquivos originais com fundo transparente. A cor é aplicada via CSS mask.
 - **Banco**: arquivo JSON acessado por repositórios (`src/db`). Para migrar para PostgreSQL, basta trocar essa camada.
