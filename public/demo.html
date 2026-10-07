@@ -175,7 +175,7 @@
           <template x-if="q && !visibleCategories.length"><p class="empty-search" x-text="`Nada encontrado para “${q}”.`"></p></template>
         </main>
 
-        <footer class="made"><span>Site feito pela</span><span class="logo"></span></footer>
+        <footer class="made"><span class="script" style="font-size:17px;color:#9b8b7a">site feito pela</span><span class="logo"></span></footer>
 
         <button class="bag-bar" x-show="count && !open && !item && !placed" @click="open = true"><span x-text="`Ver sacola (${count})`"></span><span x-text="money(total)"></span></button>
       </div>
