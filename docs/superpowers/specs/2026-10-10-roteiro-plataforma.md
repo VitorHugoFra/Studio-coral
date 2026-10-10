@@ -57,3 +57,10 @@ Pedidos pelo Vitor: última compra (data e dias desde), quantidade de pedidos, a
 
 ### Custos (etapa 7)
 - Documento com cenários de 2–5, ~10 e ~30 restaurantes: hospedagem, banco, domínio, WhatsApp (API Oficial × WPPConnect), Asaas, Focus NFe, certificado digital.
+- Pesquisa de preços salva em [2026-10-10-pesquisa-custos.md](2026-10-10-pesquisa-custos.md).
+
+## Achados da pesquisa que afetam as próximas etapas
+- **CPF no checkout (etapas 2, 5 e 6):** o Asaas exige CPF/CNPJ para gerar cobrança. A NFC-e de entrega precisa de CPF e endereço do cliente. O checkout da etapa 2 já deve pedir CPF: opcional na retirada sem nota, obrigatório para pagar online ou receber nota de entrega.
+- **Taxa do Pix (etapa 5):** o Asaas cobra R$ 1,99 fixo por Pix; Mercado Pago e Pagar.me cobram 0,99%. Para tíquetes abaixo de ~R$ 201, os dois saem mais baratos no Pix. Em compensação, o cartão do Asaas é mais barato (2,99% + R$ 0,49, recebendo em 32 dias). Reavaliar no desenho da etapa 5, mantendo o pagamento atrás de um contrato (como a mensageria), para dá para trocar de gateway.
+- **WhatsApp é o maior custo:** cada mensagem de marketing pela API Oficial custa ~R$ 0,32. Com 30 restaurantes, são R$ 9,7 mil–48 mil/mês, e esse custo precisa entrar no preço cobrado dos restaurantes.
+- **Nota fiscal (etapa 6):** Focus NFe Retail custa R$ 62,90/mês por CNPJ, com 500 NFC-e. Cada restaurante precisa de inscrição estadual, credenciamento na NFC-e em MG (irreversível) e certificado A1 (~R$ 200–275/ano).
