@@ -2828,10 +2828,20 @@ const { UsersRepo } = require('./users');
 const { SettingsRepo, DEFAULT_SETTINGS } = require('./settings');
 
 /**
+ * Configurações vistas de dentro de uma transação: leitura da cópia em memória.
+ * Gravar ali usaria o banco de fora da transação (e travaria no PGlite), então falha na hora.
+ */
+const readOnlySettings = (settings) => ({
+  get: () => settings.get(),
+  load: async () => { throw new Error('As configurações não podem ser recarregadas dentro de uma transação.'); },
+  update: async () => { throw new Error('As configurações não podem ser alteradas dentro de uma transação.'); },
+});
+
+/**
  * Repositórios ligados a um banco (ou a uma transação).
  * repos.tx(async (r) => …) entrega os mesmos repositórios dentro de uma
  * transação. Dentro do callback use SÓ o `r` recebido (ver Database#tx).
- * As configurações são compartilhadas: a cópia em memória é uma só.
+ * Dentro da transação as configurações são só leitura (r.settings.get()).
  */
 function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
   return {
@@ -2840,7 +2850,7 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     restaurants: new RestaurantsRepo(db),
     users: new UsersRepo(db),
     tx(fn) {
-      return db.tx((t) => fn(createRepositories(t, { settings })));
+      return db.tx((t) => fn(createRepositories(t, { settings: readOnlySettings(settings) })));
     },
   };
 }
@@ -3734,10 +3744,20 @@ const { MessagesRepo } = require('./messages');
 const { ConversionsRepo } = require('./conversions');
 
 /**
+ * Configurações vistas de dentro de uma transação: leitura da cópia em memória.
+ * Gravar ali usaria o banco de fora da transação (e travaria no PGlite), então falha na hora.
+ */
+const readOnlySettings = (settings) => ({
+  get: () => settings.get(),
+  load: async () => { throw new Error('As configurações não podem ser recarregadas dentro de uma transação.'); },
+  update: async () => { throw new Error('As configurações não podem ser alteradas dentro de uma transação.'); },
+});
+
+/**
  * Repositórios ligados a um banco (ou a uma transação).
  * repos.tx(async (r) => …) entrega os mesmos repositórios dentro de uma
  * transação. Dentro do callback use SÓ o `r` recebido (ver Database#tx).
- * As configurações são compartilhadas: a cópia em memória é uma só.
+ * Dentro da transação as configurações são só leitura (r.settings.get()).
  */
 function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
   return {
@@ -3750,7 +3770,7 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     messages: new MessagesRepo(db),
     conversions: new ConversionsRepo(db),
     tx(fn) {
-      return db.tx((t) => fn(createRepositories(t, { settings })));
+      return db.tx((t) => fn(createRepositories(t, { settings: readOnlySettings(settings) })));
     },
     /** Apaga todos os dados (as tabelas filhas vão junto) e volta as configurações ao padrão (npm run seed). */
     async reset() {
