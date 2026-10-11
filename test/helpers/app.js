@@ -84,27 +84,35 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR } = {}) {
   const overrides = {
     'messaging.factories': () => ({ simulator: () => new SimulatorProvider(simulator) }),
   };
-  const instance = await createApp({ config, overrides, seed });
-  const server = await instance.listen(0);
-  // O objeto config é o mesmo que os serviços receberam: os links passam a usar a porta real
-  config.publicUrl = `http://127.0.0.1:${server.address().port}`;
+  let instance = null;
+  try {
+    instance = await createApp({ config, overrides, seed });
+    const server = await instance.listen(0);
+    // O objeto config é o mesmo que os serviços receberam: rotas e fila leem publicUrl a cada uso
+    // e passam a usar a porta real (o MediaService guarda o valor ao ser criado; nenhum teste depende dele)
+    config.publicUrl = `http://127.0.0.1:${server.address().port}`;
 
-  const agency = createClient(config.publicUrl);
-  const login = await agency.login(ADMIN.email, ADMIN.password);
-  if (login.status !== 200) throw new Error(`Login da agência falhou: ${JSON.stringify(login.data)}`);
-  await waitFor(async () => (await agency.get('/api/messaging/status')).data?.state === 'connected', { message: 'simulador conectado' });
+    const agency = createClient(config.publicUrl);
+    const login = await agency.login(ADMIN.email, ADMIN.password);
+    if (login.status !== 200) throw new Error(`Login da agência falhou: ${JSON.stringify(login.data)}`);
+    await waitFor(async () => (await agency.get('/api/messaging/status')).data?.state === 'connected', { message: 'simulador conectado' });
 
-  return {
-    config,
-    baseUrl: config.publicUrl,
-    container: instance.container,
-    agency,
-    client: () => createClient(config.publicUrl),
-    async close() {
-      await instance.close();
-      fs.rmSync(dataDir, { recursive: true, force: true });
-    },
-  };
+    return {
+      config,
+      baseUrl: config.publicUrl,
+      container: instance.container,
+      agency,
+      client: () => createClient(config.publicUrl),
+      async close() {
+        await instance.close();
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      },
+    };
+  } catch (err) {
+    await instance?.close().catch(() => {});
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    throw err;
+  }
 }
 
 module.exports = { startApp, createClient, waitFor, sleep, phone, ADMIN };

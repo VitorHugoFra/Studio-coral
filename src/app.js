@@ -61,6 +61,10 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true }
     },
     async close() {
       dispatch.stop();
+      // Espera o envio em andamento (no máximo 3 s) antes de desligar o canal e gravar
+      for (const until = Date.now() + 3000; dispatch.busy && Date.now() < until;) {
+        await new Promise((r) => { setTimeout(r, 10); });
+      }
       // Fecha o navegador do WPPConnect mantendo a sessão salva
       await Promise.race([
         Promise.all([messaging.stop().catch(() => {}), container.resolve('pdf').close()]),
