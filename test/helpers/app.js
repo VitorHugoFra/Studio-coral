@@ -75,6 +75,8 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR } = {}) {
     port: 0,
     publicUrl: 'http://127.0.0.1',
     dataDir,
+    databaseUrl: '',
+    pgliteDir: 'memory://',
     admin: ADMIN,
     sessionSecret: 'segredo-dos-testes',
     simulatorPace: { min: 0, max: 0.005 },
@@ -85,12 +87,11 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR } = {}) {
     },
   };
   const overrides = {
-    logger: () => QUIET,
     'messaging.factories': () => ({ simulator: () => new SimulatorProvider(simulator) }),
   };
   let instance = null;
   try {
-    instance = await createApp({ config, overrides, seed });
+    instance = await createApp({ config, overrides, seed, logger: QUIET });
     const server = await instance.listen(0);
     // O objeto config é o mesmo que os serviços receberam: rotas e fila leem publicUrl a cada uso
     // e passam a usar a porta real (o MediaService guarda o valor ao ser criado; nenhum teste depende dele)

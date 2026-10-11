@@ -1,7 +1,5 @@
-const path = require('path');
 const { Container } = require('./container');
-const config = require('./config');
-const { JsonStore } = require('./db/JsonStore');
+const defaultConfig = require('./config');
 const { createRepositories } = require('./db/repositories');
 const { registerMessaging } = require('./messaging');
 const { EventBus } = require('./services/EventBus');
@@ -16,14 +14,16 @@ const { PdfService } = require('./services/PdfService');
 /**
  * Composição da aplicação (composition root).
  * Aqui — e somente aqui — as implementações concretas são ligadas aos contratos.
+ * O banco chega já aberto e migrado (abrir é assíncrono; ver src/app.js).
  */
-function buildContainer({ config: cfg = config, overrides = {} } = {}) {
+function buildContainer({ config = defaultConfig, db, logger = console, overrides = {} } = {}) {
+  if (!db) throw new Error('[container] Informe o banco de dados (db).');
   const c = new Container();
 
-  c.value('config', cfg);
-  c.value('logger', console);
-  c.register('store', (x) => new JsonStore(path.join(x.resolve('config').dataDir, 'db.json')));
-  c.register('repos', (x) => createRepositories(x.resolve('store')));
+  c.value('config', config);
+  c.value('logger', logger);
+  c.value('db', db);
+  c.register('repos', (x) => createRepositories(x.resolve('db')));
   c.register('events', () => new EventBus());
   c.register('auth', (x) => new AuthService({ config: x.resolve('config'), repos: x.resolve('repos') }));
   c.register('templates', (x) => new TemplateService({ settings: x.resolve('repos').settings }));

@@ -67,16 +67,16 @@ class AuthService {
     return this.sign({ ...user, exp: Date.now() + TTL });
   }
 
-  login(email, password) {
+  async login(email, password) {
     const mail = String(email).trim().toLowerCase();
     if (this.safeEqual(mail, this.admin.email.toLowerCase()) && this.safeEqual(password, this.admin.password)) {
       return this.tokenFor({ role: 'agency', email: this.admin.email, name: this.admin.name });
     }
-    const user = this.repos.users.by('email', mail);
+    const user = await this.repos.users.byEmail(mail);
     if (!user || !AuthService.checkPassword(password, user.passwordHash)) return null;
-    const restaurant = this.repos.restaurants.get(user.restaurantId);
+    const restaurant = await this.repos.restaurants.get(user.restaurantId);
     if (!restaurant) return null;
-    this.repos.users.update(user, { lastLoginAt: new Date().toISOString() });
+    await this.repos.users.update(user, { lastLoginAt: new Date().toISOString() });
     return this.tokenFor({ role: 'restaurant', userId: user.id, restaurantId: user.restaurantId, email: user.email, name: user.name, restaurant: restaurant.name });
   }
 
@@ -97,12 +97,18 @@ class AuthService {
   middleware() {
     return (req, res, next) => {
       const user = this.verify(this.readCookie(req));
-      // Usuário de restaurante removido perde o acesso na hora
-      if (!user || (user.role === 'restaurant' && !this.repos.users.get(user.userId))) {
-        return res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
+      const expired = () => res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
+      if (!user) return expired();
+      if (user.role !== 'restaurant') {
+        req.user = user;
+        return next();
       }
-      req.user = user;
-      return next();
+      // Usuário de restaurante removido perde o acesso na hora
+      return this.repos.users.get(user.userId).then((found) => {
+        if (!found) return expired();
+        req.user = user;
+        return next();
+      }, next);
     };
   }
 }

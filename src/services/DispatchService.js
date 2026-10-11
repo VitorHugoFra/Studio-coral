@@ -1,10 +1,10 @@
 const crypto = require('crypto');
 const { MessagingProvider } = require('../messaging/MessagingProvider');
 
-const RANK = { queued: 0, sending: 1, sent: 2, delivered: 3, read: 4 };
 const ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const normalizeText = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
-const today = () => new Date().toISOString().slice(0, 10);
+/** Meia-noite (UTC) de hoje: o limite diário conta os envios desde então. */
+const startOfTodayUtc = () => `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
 
 /** Chave de comparação de telefone: DDD + últimos 8 dígitos (ignora o 9º dígito). */
 const phoneKey = (phone) => MessagingProvider.phoneKey(phone);
@@ -16,6 +16,8 @@ const phoneKey = (phone) => MessagingProvider.phoneKey(phone);
  * se o envio vai pelo WPPConnect, pela API Oficial ou pelo simulador.
  * Um envio por vez, com intervalo aleatório entre mensagens, limite diário e
  * janela de horário — boas práticas para proteger o número do restaurante.
+ * As mudanças de estado são atômicas no banco (reserva da mensagem, status
+ * que nunca volta, conclusão que respeita uma pausa).
  */
 class DispatchService {
   constructor({ repos, messaging, templates, media, events, config, logger = console }) {
@@ -28,11 +30,14 @@ class DispatchService {
     this.logger = logger;
     this.timer = null;
     this.busy = false;
+    this.stopped = false;
+    this.checking = false;
+    this.pending = new Set();
   }
 
-  init() {
-    this.messaging.on('ack', (e) => this.handleAck(e));
-    this.messaging.on('incoming', (e) => this.handleIncoming(e).catch((err) => this.logger.error(err)));
+  async init() {
+    this.messaging.on('ack', (e) => this.track(this.handleAck(e)));
+    this.messaging.on('incoming', (e) => this.track(this.handleIncoming(e)));
     this.messaging.on('status', (s) => {
       this.events.publish('messaging:status', s);
       if (s.state === 'connected') this.kick();
@@ -40,12 +45,18 @@ class DispatchService {
     this.messaging.on('outbox', (item) => this.events.publish('outbox', item));
 
     // Mensagens que estavam "enviando" quando o servidor caiu voltam para a fila
-    for (const m of this.repos.messages.filter((x) => x.status === 'sending')) {
-      this.repos.messages.update(m, { status: 'queued' });
-    }
-    this.scheduleTimer = setInterval(() => this.checkSchedules(), 15000).unref();
-    this.checkSchedules();
+    await this.repos.messages.requeueSending();
+    this.scheduleTimer = setInterval(() => this.track(this.checkSchedules()), 15000).unref();
+    await this.checkSchedules();
     this.kick();
+  }
+
+  /** Acompanha tarefas em segundo plano (confirmações, respostas) e registra os erros. */
+  track(promise) {
+    const task = Promise.resolve(promise).catch((err) => this.logger.error('[dispatch]', err));
+    this.pending.add(task);
+    task.finally(() => this.pending.delete(task));
+    return task;
   }
 
   /** Para a fila e os agendamentos (desligamento do servidor e testes). */
@@ -56,124 +67,135 @@ class DispatchService {
     this.timer = null;
   }
 
+  /** Espera o passo atual e as tarefas em andamento (antes de fechar o banco). */
+  async idle() {
+    while (this.busy || this.pending.size) {
+      await Promise.all([...this.pending]);
+      if (this.busy) await new Promise((r) => { setTimeout(r, 10); });
+    }
+  }
+
   // ── Público-alvo ───────────────────────────────────────────
 
   audience(restaurantId, segment = {}) {
-    const tags = (segment.tags || []).filter(Boolean);
-    const match = segment.match === 'all' ? 'all' : 'any';
-    return this.repos.contacts.filter((c) => {
-      if (c.restaurantId !== restaurantId || !c.optIn || c.optedOut) return false;
-      if (!tags.length) return true;
-      const has = (t) => (c.tags || []).includes(t);
-      return match === 'all' ? tags.every(has) : tags.some(has);
-    });
+    return this.repos.contacts.audience(restaurantId, segment);
   }
 
   // ── Ciclo de vida da campanha ──────────────────────────────
 
   newCode() {
-    for (;;) {
-      const bytes = crypto.randomBytes(6);
-      const code = Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join('');
-      if (!this.repos.messages.by('code', code)) return code;
-    }
+    const bytes = crypto.randomBytes(6);
+    return Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join('');
   }
 
   trackingLink(code) {
     return `${this.config.publicUrl}/r/${code}`;
   }
 
-  start(campaignId) {
-    const campaign = this.mustGet(campaignId);
+  async start(campaignId) {
+    const campaign = await this.mustGet(campaignId);
     if (!['draft', 'scheduled'].includes(campaign.status)) throw new Error('Esta campanha já foi iniciada.');
     if (!campaign.message?.trim()) throw new Error('Escreva a mensagem antes de disparar.');
-    const restaurant = this.repos.restaurants.get(campaign.restaurantId);
+    const restaurant = await this.repos.restaurants.get(campaign.restaurantId);
     if (!restaurant) throw new Error('Restaurante não encontrado.');
     this.assertApproved(campaign, restaurant);
 
-    const contacts = this.audience(campaign.restaurantId, campaign.segment);
+    const contacts = await this.audience(campaign.restaurantId, campaign.segment);
     if (!contacts.length) throw new Error('Nenhum contato autorizado corresponde a esta segmentação.');
 
     const at = new Date().toISOString();
-    this.repos.messages.insertMany(
-      contacts.map((c) => ({
-        campaignId: campaign.id,
-        restaurantId: campaign.restaurantId,
-        contactId: c.id,
-        name: c.name,
-        phone: c.phone,
-        demo: !!c.demo,
-        code: this.newCode(),
-        status: 'queued',
-        queuedAt: at,
-        clicks: 0,
-      })),
-    );
-    this.repos.campaigns.update(campaign, {
-      status: 'sending',
-      startedAt: at,
-      audienceSize: contacts.length,
-      provider: this.messaging.key,
-      waitingReason: null,
-    });
-    this.publishProgress(campaign.id);
+    const queue = contacts.map((c) => ({
+      campaignId: campaign.id,
+      restaurantId: campaign.restaurantId,
+      contactId: c.id,
+      name: c.name,
+      phone: c.phone,
+      demo: !!c.demo,
+      status: 'queued',
+      queuedAt: at,
+      clicks: 0,
+    }));
+    // A fila e o novo status entram juntos. Se um código de link colidir
+    // (índice único), a transação é desfeita e refeita com códigos novos.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await this.repos.tx(async (r) => {
+          const moved = await r.campaigns.transition(campaign, ['draft', 'scheduled'], {
+            status: 'sending',
+            startedAt: at,
+            audienceSize: contacts.length,
+            provider: this.messaging.key,
+            waitingReason: null,
+          });
+          if (!moved) throw new Error('Esta campanha já foi iniciada.');
+          await r.messages.insertMany(queue.map((m) => ({ ...m, code: this.newCode() })));
+        });
+        break;
+      } catch (err) {
+        if (err.constraint !== 'messages_code_key' || attempt >= 3) throw err;
+      }
+    }
+    this.publishProgress(campaign);
     this.kick();
     return campaign;
   }
 
-  schedule(campaignId, when) {
-    const campaign = this.mustGet(campaignId);
+  async schedule(campaignId, when) {
+    const campaign = await this.mustGet(campaignId);
     if (!['draft', 'scheduled'].includes(campaign.status)) throw new Error('Esta campanha já foi iniciada.');
-    this.assertApproved(campaign, this.repos.restaurants.get(campaign.restaurantId));
+    this.assertApproved(campaign, await this.repos.restaurants.get(campaign.restaurantId));
     const date = new Date(when);
     if (Number.isNaN(date.getTime()) || date.getTime() < Date.now() - 60000) throw new Error('Escolha uma data futura.');
-    this.repos.campaigns.update(campaign, { status: 'scheduled', scheduledAt: date.toISOString() });
-    this.publishProgress(campaign.id);
+    await this.repos.campaigns.update(campaign, { status: 'scheduled', scheduledAt: date.toISOString() });
+    this.publishProgress(campaign);
     return campaign;
   }
 
-  pause(campaignId) {
-    const c = this.mustGet(campaignId);
+  async pause(campaignId) {
+    const c = await this.mustGet(campaignId);
     if (c.status !== 'sending') throw new Error('Só é possível pausar campanhas em andamento.');
-    this.repos.campaigns.update(c, { status: 'paused' });
-    this.publishProgress(c.id);
+    await this.repos.campaigns.update(c, { status: 'paused' });
+    this.publishProgress(c);
     return c;
   }
 
-  resume(campaignId) {
-    const c = this.mustGet(campaignId);
+  async resume(campaignId) {
+    const c = await this.mustGet(campaignId);
     if (c.status !== 'paused') throw new Error('A campanha não está pausada.');
-    this.repos.campaigns.update(c, { status: 'sending' });
-    this.publishProgress(c.id);
+    await this.repos.campaigns.update(c, { status: 'sending' });
+    this.publishProgress(c);
     this.kick();
     return c;
   }
 
-  cancel(campaignId) {
-    const c = this.mustGet(campaignId);
+  async cancel(campaignId) {
+    const c = await this.mustGet(campaignId);
     if (['completed', 'canceled'].includes(c.status)) throw new Error('A campanha já foi encerrada.');
     if (c.status === 'scheduled' || c.status === 'draft') {
-      this.repos.campaigns.update(c, { status: 'draft', scheduledAt: null });
+      await this.repos.campaigns.update(c, { status: 'draft', scheduledAt: null });
     } else {
-      for (const m of this.repos.messages.filter((x) => x.campaignId === c.id && x.status === 'queued')) {
-        this.repos.messages.update(m, { status: 'skipped', error: 'Campanha cancelada' });
-      }
-      this.repos.campaigns.update(c, { status: 'canceled', completedAt: new Date().toISOString() });
+      await this.repos.messages.skipQueued(c.id, 'Campanha cancelada');
+      await this.repos.campaigns.update(c, { status: 'canceled', completedAt: new Date().toISOString() });
     }
-    this.publishProgress(c.id);
+    this.publishProgress(c);
     return c;
   }
 
-  checkSchedules() {
-    const due = this.repos.campaigns.filter((c) => c.status === 'scheduled' && new Date(c.scheduledAt) <= new Date());
-    for (const c of due) {
-      try {
-        this.repos.campaigns.update(c, { status: 'draft' });
-        this.start(c.id);
-      } catch (err) {
-        this.repos.campaigns.update(c, { status: 'draft', lastError: err.message });
-        this.publishProgress(c.id);
+  async checkSchedules() {
+    if (this.checking) return;
+    this.checking = true;
+    try {
+      const due = await this.repos.campaigns.dueScheduled(new Date().toISOString());
+      for (const c of due) {
+        try {
+          await this.start(c.id);
+        } catch (err) {
+          // Só volta para rascunho se ainda estiver agendada (não desfaz um envio que começou)
+          if (await this.repos.campaigns.transition(c, ['scheduled'], { status: 'draft', lastError: err.message })) this.publishProgress(c);
+        }
       }
+    } finally {
+      this.checking = false;
     }
   }
 
@@ -194,6 +216,7 @@ class DispatchService {
 
   async tick() {
     this.timer = null;
+    if (this.stopped) return;
     this.busy = true;
     let next = null;
     try {
@@ -207,11 +230,11 @@ class DispatchService {
     if (next !== null && !this.stopped) this.timer = setTimeout(() => this.tick(), next);
   }
 
-  setWaiting(campaigns, reason) {
+  async setWaiting(campaigns, reason) {
     for (const c of campaigns) {
       if (c.waitingReason !== reason) {
-        this.repos.campaigns.update(c, { waitingReason: reason });
-        this.publishProgress(c.id);
+        await this.repos.campaigns.update(c, { waitingReason: reason });
+        this.publishProgress(c);
       }
     }
   }
@@ -224,38 +247,35 @@ class DispatchService {
 
   /** Processa uma mensagem. Retorna em quantos ms rodar novamente (ou null se a fila acabou). */
   async step() {
-    const active = this.repos.campaigns
-      .filter((c) => c.status === 'sending')
-      .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+    const active = await this.repos.campaigns.byStatus('sending');
     if (!active.length) return null;
 
     const settings = this.repos.settings.get();
     if (!this.messaging.isConnected()) {
-      this.setWaiting(active, 'Aguardando conexão com o WhatsApp');
+      await this.setWaiting(active, 'Aguardando conexão com o WhatsApp');
       return 5000;
     }
     if (!this.withinBusinessHours(settings)) {
-      this.setWaiting(active, `Fora do horário de envio (${settings.businessHours.start}–${settings.businessHours.end})`);
+      await this.setWaiting(active, `Fora do horário de envio (${settings.businessHours.start}–${settings.businessHours.end})`);
       return 60000;
     }
-    const sentToday = this.repos.messages.filter((m) => m.sentAt && m.sentAt.slice(0, 10) === today()).length;
-    if (sentToday >= settings.dailyLimit) {
-      this.setWaiting(active, `Limite diário de ${settings.dailyLimit} envios atingido`);
+    if ((await this.repos.messages.countSentSince(startOfTodayUtc())) >= settings.dailyLimit) {
+      await this.setWaiting(active, `Limite diário de ${settings.dailyLimit} envios atingido`);
       return 60000;
     }
 
     let message = null;
     let campaign = null;
     for (const c of active) {
-      message = this.repos.messages.find((m) => m.campaignId === c.id && m.status === 'queued');
+      message = await this.repos.messages.claimNext(c.id);
       if (message) { campaign = c; break; }
-      this.complete(c);
+      await this.complete(c);
     }
     if (!message) return null;
-    if (campaign.waitingReason) this.repos.campaigns.update(campaign, { waitingReason: null });
+    if (campaign.waitingReason) await this.repos.campaigns.update(campaign, { waitingReason: null });
 
     const sent = await this.deliver(campaign, message);
-    if (!this.repos.messages.find((m) => m.campaignId === campaign.id && m.status === 'queued')) this.complete(campaign);
+    if (!(await this.repos.messages.hasQueued(campaign.id))) await this.complete(campaign);
 
     if (!sent) return 300; // ignorada/falhou sem tocar no WhatsApp: segue rápido
     const simulator = this.messaging.key === 'simulator';
@@ -265,22 +285,25 @@ class DispatchService {
     return Math.round((min + Math.random() * (max - min)) * 1000);
   }
 
-  complete(campaign) {
+  async complete(campaign) {
     if (campaign.status !== 'sending') return;
-    this.repos.campaigns.update(campaign, { status: 'completed', completedAt: new Date().toISOString(), waitingReason: null });
-    this.publishProgress(campaign.id);
+    // Só conclui se ainda estiver enviando: uma pausa no meio do caminho vale
+    const done = await this.repos.campaigns.transition(campaign, ['sending'], { status: 'completed', completedAt: new Date().toISOString(), waitingReason: null });
+    if (done) this.publishProgress(campaign);
   }
 
   async deliver(campaign, message) {
-    const contact = this.repos.contacts.get(message.contactId);
-    const restaurant = this.repos.restaurants.get(campaign.restaurantId);
+    const [contact, restaurant] = await Promise.all([
+      this.repos.contacts.get(message.contactId),
+      this.repos.restaurants.get(campaign.restaurantId),
+    ]);
 
     if (!contact || contact.optedOut || !contact.optIn) {
-      this.updateMessage(message, { status: 'skipped', error: 'Contato descadastrado' });
+      await this.updateMessage(campaign, message, { status: 'skipped', error: 'Contato descadastrado' });
       return false;
     }
     if (contact.demo && this.messaging.key !== 'simulator') {
-      this.updateMessage(message, { status: 'skipped', error: 'Contato fictício (só é enviado no simulador)' });
+      await this.updateMessage(campaign, message, { status: 'skipped', error: 'Contato fictício (só é enviado no simulador)' });
       return false;
     }
 
@@ -291,27 +314,30 @@ class DispatchService {
       ? { ...campaign.cloudTemplate, params: this.templates.templateParams(campaign, vars) }
       : undefined;
 
-    this.updateMessage(message, { status: 'sending', text });
+    await this.updateMessage(campaign, message, { status: 'sending', text });
     try {
       const media = this.media.resolve(campaign.mediaUrl);
       const res = await this.messaging.send({ to: contact.phone, text, media, template });
-      this.updateMessage(message, {
-        status: RANK[message.status] > RANK.sent ? message.status : 'sent',
+      const sent = await this.repos.messages.markSent(message.id, {
         provider: this.messaging.key,
         providerMessageId: res.providerMessageId,
         sentAt: new Date().toISOString(),
-        error: null,
       });
+      this.publishMessage(campaign, sent || message);
     } catch (err) {
-      this.updateMessage(message, { status: 'failed', error: err.message, failedAt: new Date().toISOString() });
+      await this.updateMessage(campaign, message, { status: 'failed', error: err.message, failedAt: new Date().toISOString() });
     }
     return true;
   }
 
-  updateMessage(message, patch) {
-    this.repos.messages.update(message, patch);
+  async updateMessage(campaign, message, patch) {
+    const updated = await this.repos.messages.update(message, patch);
+    this.publishMessage(campaign, updated || message);
+  }
+
+  publishMessage(campaign, message) {
     this.events.publish('message:update', this.publicMessage(message));
-    this.publishProgress(message.campaignId);
+    this.publishProgress(campaign);
   }
 
   publicMessage(m) {
@@ -321,40 +347,46 @@ class DispatchService {
 
   // ── Confirmações e respostas ───────────────────────────────
 
-  handleAck({ providerMessageId, status, error }) {
-    const message = this.repos.messages.by('providerMessageId', providerMessageId);
-    if (!message) return;
+  async handleAck({ providerMessageId, status, error }, attempt = 1) {
     const at = new Date().toISOString();
-    if (status === 'failed') {
-      this.updateMessage(message, { status: 'failed', error: error || 'Falha reportada pelo WhatsApp', failedAt: at });
+    const message = status === 'failed'
+      ? await this.repos.messages.markFailedByProvider(providerMessageId, error || 'Falha reportada pelo WhatsApp', at)
+      : await this.repos.messages.applyAck(providerMessageId, status, at);
+    if (message) {
+      this.events.publish('message:update', this.publicMessage(message));
+      await this.publishProgressById(message.campaignId);
       return;
     }
-    if ((RANK[status] ?? -1) <= (RANK[message.status] ?? -1)) return;
-    const patch = { status };
-    if (status === 'delivered' || status === 'read') patch.deliveredAt = message.deliveredAt || at;
-    if (status === 'read') patch.readAt = at;
-    this.updateMessage(message, patch);
+    // A confirmação pode chegar antes de o envio ser gravado: tenta de novo em instantes
+    if (attempt < 4 && !this.stopped && !(await this.repos.messages.byProviderId(providerMessageId))) {
+      await new Promise((r) => { setTimeout(r, 250 * attempt); });
+      await this.handleAck({ providerMessageId, status, error }, attempt + 1);
+    }
   }
 
   async handleIncoming({ from, body }) {
     const key = phoneKey(from);
-    const contacts = this.repos.contacts.filter((c) => phoneKey(c.phone) === key);
+    const contacts = await this.repos.contacts.byPhoneKey(key);
     const settings = this.repos.settings.get();
     const text = normalizeText(body);
     const isOptOut = settings.optOutKeywords.map(normalizeText).includes(text);
     const at = new Date().toISOString();
 
     if (isOptOut) {
-      contacts.forEach((c) => this.repos.contacts.update(c, { optedOut: true, optedOutAt: at }));
+      await this.repos.contacts.markOptedOut(contacts.map((c) => c.id), at);
       if (settings.optOutReply) {
         await this.messaging.send({ to: from, text: settings.optOutReply }).catch(() => {});
       }
     }
 
-    const last = this.repos.messages
-      .filter((m) => phoneKey(m.phone) === key && m.sentAt)
-      .sort((a, b) => b.sentAt.localeCompare(a.sentAt))[0];
-    if (last && !last.repliedAt) this.updateMessage(last, { repliedAt: at, reply: String(body).slice(0, 280), optOut: isOptOut });
+    const last = await this.repos.messages.lastSentToPhoneKey(key);
+    if (last && !last.repliedAt) {
+      const updated = await this.repos.messages.registerReply(last.id, { reply: String(body).slice(0, 280), optOut: isOptOut, at });
+      if (updated) {
+        this.events.publish('message:update', this.publicMessage(updated));
+        await this.publishProgressById(updated.campaignId);
+      }
+    }
 
     this.events.publish('incoming', { from, body, optOut: isOptOut, contacts: contacts.map((c) => c.name) });
   }
@@ -362,7 +394,7 @@ class DispatchService {
   // ── Teste ──────────────────────────────────────────────────
 
   async sendTest({ campaign, phone }) {
-    const restaurant = this.repos.restaurants.get(campaign.restaurantId);
+    const restaurant = await this.repos.restaurants.get(campaign.restaurantId);
     const destination = this.destinationFor(campaign, restaurant);
     const link = `${destination}${destination.includes('?') ? '&' : '?'}utm_source=whatsapp&utm_medium=teste`;
     const contact = { name: 'Cliente Teste', phone };
@@ -382,16 +414,19 @@ class DispatchService {
 
   // ── Utilidades ─────────────────────────────────────────────
 
-  mustGet(id) {
-    const c = this.repos.campaigns.get(id);
+  async mustGet(id) {
+    const c = await this.repos.campaigns.get(id);
     if (!c) throw new Error('Campanha não encontrada.');
     return c;
   }
 
-  publishProgress(campaignId) {
-    const campaign = this.repos.campaigns.get(campaignId);
-    if (!campaign) return;
-    this.events.publish('campaign:progress', { id: campaignId, restaurantId: campaign.restaurantId, status: campaign.status, waitingReason: campaign.waitingReason || null });
+  publishProgress(campaign) {
+    this.events.publish('campaign:progress', { id: campaign.id, restaurantId: campaign.restaurantId, status: campaign.status, waitingReason: campaign.waitingReason || null });
+  }
+
+  async publishProgressById(campaignId) {
+    const campaign = await this.repos.campaigns.get(campaignId);
+    if (campaign) this.publishProgress(campaign);
   }
 }
 

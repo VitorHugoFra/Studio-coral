@@ -30,7 +30,8 @@ function registerMessaging(container) {
     return new MessagingManager({
       factories: c.resolve('messaging.factories'),
       initial,
-      onChange: (key) => settings.update({ provider: key, providerEnvBase: envProvider }),
+      onChange: (key) => settings.update({ provider: key, providerEnvBase: envProvider })
+        .catch((err) => c.resolve('logger').error('[settings] Não foi possível salvar o provedor escolhido:', err.message)),
     });
   });
 }

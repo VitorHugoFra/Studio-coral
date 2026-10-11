@@ -109,6 +109,14 @@ describe('contatos', () => {
     }
   });
 
+  it('editar o telefone para um que já existe é recusado', async () => {
+    const marina = await byName('Marina S.');
+    const bruno = await byName('Bruno Lima');
+    const res = await ctx.agency.put(`/api/contacts/${bruno.id}`, { phone: marina.phone });
+    assert.equal(res.status, 400);
+    assert.equal(res.data.error, 'Este telefone já está na base.');
+  });
+
   it('conta contatos no restaurante e exclui', async () => {
     const before = (await ctx.agency.get(`/api/restaurants/${r.id}`)).data;
     assert.equal(before.contactsCount, 4);

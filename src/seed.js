@@ -88,160 +88,172 @@ const RESTAURANT_USERS = {
 
 const TAG_POOL = [['vip'], ['inativo'], ['familia'], ['casal'], ['almoco'], ['fim-de-semana'], ['aniversariante'], []];
 
-function seed(repos, { reset = false } = {}) {
-  if (reset) {
-    repos.store.reset();
-    repos.reindexAll();
-  }
+async function seed(repos, { reset = false } = {}) {
+  if (reset) await repos.reset();
   const rand = rng(42);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const now = Date.now();
   const iso = (t) => new Date(t).toISOString();
 
-  RESTAURANTS.forEach((data, ri) => {
-    const restaurant = repos.restaurants.create({
-      ...data,
-      demo: true,
-      requireApproval: true,
-      menu: data.menu.map((it) => ({ ...it, image: IMAGES[it.id] ? `/demo-assets/${IMAGES[it.id]}.svg` : '' })),
-      banners: (BANNERS[data.slug] || []).map((b) => `/demo-assets/${b}.svg`),
-    });
-    const login = RESTAURANT_USERS[data.slug];
-    if (login) {
-      repos.users.create({ restaurantId: restaurant.id, role: 'restaurant', name: login.name, email: login.email, passwordHash: AuthService.hashPassword(login.password) });
-    }
-
-    // Contatos fictícios
-    const contacts = [];
-    const total = ri === 0 ? 48 : 34;
-    for (let i = 0; i < total; i += 1) {
-      const tags = [...new Set([...pick(TAG_POOL), ...(rand() < 0.3 ? pick(TAG_POOL) : [])])];
-      contacts.push({
-        restaurantId: restaurant.id,
-        name: `${pick(FIRST)} ${pick(LAST)}`,
-        phone: `55009${String(80000000 + ri * 1000 + i * 37).padStart(8, '0')}`,
-        tags,
-        optIn: i % 17 !== 5,
-        optInSource: pick(['Pedido no site', 'Cadastro no balcão', 'QR Code na mesa', 'Programa de fidelidade']),
-        optedOut: i % 23 === 7,
+  // Numa transação: ou a demonstração entra inteira, ou nada entra
+  await repos.tx(async (r) => {
+    for (const [ri, data] of RESTAURANTS.entries()) {
+      const restaurant = await r.restaurants.create({
+        ...data,
         demo: true,
-        createdAt: iso(now - (30 + i) * DAY),
+        requireApproval: true,
+        menu: data.menu.map((it) => ({ ...it, image: IMAGES[it.id] ? `/demo-assets/${IMAGES[it.id]}.svg` : '' })),
+        banners: (BANNERS[data.slug] || []).map((b) => `/demo-assets/${b}.svg`),
       });
-    }
-    const saved = repos.contacts.insertMany(contacts);
-    const eligible = saved.filter((c) => c.optIn && !c.optedOut);
+      const login = RESTAURANT_USERS[data.slug];
+      if (login) {
+        await r.users.create({ restaurantId: restaurant.id, role: 'restaurant', name: login.name, email: login.email, passwordHash: AuthService.hashPassword(login.password) });
+      }
 
-    // Campanhas históricas concluídas
-    const history = ri === 0
-      ? [
-        { name: 'Sextou com Massa Fresca', daysAgo: 12, objective: 'Aumentar pedidos no fim de semana', occasion: 'Sexta-feira', coupon: 'NONNA10', perf: [0.97, 0.78, 0.34, 0.42] },
-        { name: 'Saudade da Nonna', daysAgo: 6, objective: 'Reativar clientes inativos', occasion: 'Recorrente', coupon: 'VOLTA15', perf: [0.95, 0.81, 0.41, 0.38] },
-        { name: 'Lançamento: Nhoque de Baroa', daysAgo: 2, objective: 'Divulgar lançamento de produto', occasion: 'Lançamento', coupon: 'NONNA10', perf: [0.98, 0.74, 0.29, 0.33] },
-      ]
-      : [
-        { name: 'Marmita da Semana', daysAgo: 9, objective: 'Aumentar pedidos no almoço', occasion: 'Recorrente', coupon: 'UAI15', perf: [0.96, 0.83, 0.38, 0.47] },
-        { name: 'Dia de Chuva, Dia de Tropeiro', daysAgo: 4, objective: 'Oportunidade do clima', occasion: 'Clima', coupon: 'UAI15', perf: [0.94, 0.77, 0.31, 0.4] },
-      ];
-
-    for (const h of history) {
-      const start = now - h.daysAgo * DAY + 18 * 3600e3 - (new Date().getHours() * 3600e3);
-      const campaign = repos.campaigns.create({
-        restaurantId: restaurant.id,
-        name: h.name,
-        objective: h.objective,
-        occasion: h.occasion,
-        coupon: h.coupon,
-        message: '{Oi|Olá}, {{primeiro_nome}}! Aqui é do {{restaurante}}. Esta semana o cupom *{{cupom}}* vale nos pedidos pelo site:\n\n{{link}}',
-        segment: { tags: [], match: 'any' },
-        includeFooter: true,
-        status: 'completed',
-        approval: { status: 'approved', decidedBy: RESTAURANT_USERS[data.slug].name, decidedAt: iso(start - DAY / 2) },
-        provider: 'simulator',
-        audienceSize: eligible.length,
-        startedAt: iso(start),
-        completedAt: iso(start + 40 * 60e3),
-        createdAt: iso(start - DAY),
-        demo: true,
-      });
-      const [deliv, read, click, conv] = h.perf;
-      eligible.forEach((c, i) => {
-        const sentAt = start + i * 50e3;
-        const ok = rand() < deliv;
-        const wasRead = ok && rand() < read;
-        const clicked = wasRead && rand() < click / read * 0.9 + 0.05;
-        const converted = clicked && rand() < conv;
-        const m = repos.messages.create({
-          campaignId: campaign.id,
+      // Contatos fictícios
+      const contacts = [];
+      const total = ri === 0 ? 48 : 34;
+      for (let i = 0; i < total; i += 1) {
+        const tags = [...new Set([...pick(TAG_POOL), ...(rand() < 0.3 ? pick(TAG_POOL) : [])])];
+        contacts.push({
           restaurantId: restaurant.id,
-          contactId: c.id,
-          name: c.name,
-          phone: c.phone,
+          name: `${pick(FIRST)} ${pick(LAST)}`,
+          phone: `55009${String(80000000 + ri * 1000 + i * 37).padStart(8, '0')}`,
+          tags,
+          optIn: i % 17 !== 5,
+          optInSource: pick(['Pedido no site', 'Cadastro no balcão', 'QR Code na mesa', 'Programa de fidelidade']),
+          optedOut: i % 23 === 7,
           demo: true,
-          code: crypto.randomBytes(5).toString('base64url'),
-          status: ok ? (wasRead ? 'read' : 'delivered') : 'failed',
-          error: ok ? null : 'Número não possui WhatsApp',
-          provider: 'simulator',
-          queuedAt: iso(start),
-          sentAt: iso(sentAt),
-          deliveredAt: ok ? iso(sentAt + 60e3) : null,
-          readAt: wasRead ? iso(sentAt + (5 + rand() * 120) * 60e3) : null,
-          clickedAt: clicked ? iso(sentAt + (10 + rand() * 600) * 60e3) : null,
-          clicks: clicked ? 1 + Math.floor(rand() * 2) : 0,
-          createdAt: iso(start),
+          createdAt: iso(now - (30 + i) * DAY),
         });
-        if (converted) {
-          const items = [pick(data.menu), pick(data.menu)];
-          const value = Math.round(items.reduce((s, it) => s + it.price, 0) * 0.9 * 100) / 100;
-          const at = iso(new Date(m.clickedAt).getTime() + 8 * 60e3);
-          repos.conversions.create({
-            restaurantId: restaurant.id,
+      }
+      const saved = await r.contacts.insertMany(contacts);
+      const eligible = saved.filter((c) => c.optIn && !c.optedOut);
+
+      // Campanhas históricas concluídas
+      const history = ri === 0
+        ? [
+          { name: 'Sextou com Massa Fresca', daysAgo: 12, objective: 'Aumentar pedidos no fim de semana', occasion: 'Sexta-feira', coupon: 'NONNA10', perf: [0.97, 0.78, 0.34, 0.42] },
+          { name: 'Saudade da Nonna', daysAgo: 6, objective: 'Reativar clientes inativos', occasion: 'Recorrente', coupon: 'VOLTA15', perf: [0.95, 0.81, 0.41, 0.38] },
+          { name: 'Lançamento: Nhoque de Baroa', daysAgo: 2, objective: 'Divulgar lançamento de produto', occasion: 'Lançamento', coupon: 'NONNA10', perf: [0.98, 0.74, 0.29, 0.33] },
+        ]
+        : [
+          { name: 'Marmita da Semana', daysAgo: 9, objective: 'Aumentar pedidos no almoço', occasion: 'Recorrente', coupon: 'UAI15', perf: [0.96, 0.83, 0.38, 0.47] },
+          { name: 'Dia de Chuva, Dia de Tropeiro', daysAgo: 4, objective: 'Oportunidade do clima', occasion: 'Clima', coupon: 'UAI15', perf: [0.94, 0.77, 0.31, 0.4] },
+        ];
+
+      for (const h of history) {
+        const start = now - h.daysAgo * DAY + 18 * 3600e3 - (new Date().getHours() * 3600e3);
+        const campaign = await r.campaigns.create({
+          restaurantId: restaurant.id,
+          name: h.name,
+          objective: h.objective,
+          occasion: h.occasion,
+          coupon: h.coupon,
+          message: '{Oi|Olá}, {{primeiro_nome}}! Aqui é do {{restaurante}}. Esta semana o cupom *{{cupom}}* vale nos pedidos pelo site:\n\n{{link}}',
+          segment: { tags: [], match: 'any' },
+          includeFooter: true,
+          status: 'completed',
+          approval: { status: 'approved', decidedBy: RESTAURANT_USERS[data.slug].name, decidedAt: iso(start - DAY / 2) },
+          provider: 'simulator',
+          audienceSize: eligible.length,
+          startedAt: iso(start),
+          completedAt: iso(start + 40 * 60e3),
+          createdAt: iso(start - DAY),
+          demo: true,
+        });
+        const [deliv, read, click, conv] = h.perf;
+        for (const [i, c] of eligible.entries()) {
+          const sentAt = start + i * 50e3;
+          const ok = rand() < deliv;
+          const wasRead = ok && rand() < read;
+          const clicked = wasRead && rand() < click / read * 0.9 + 0.05;
+          const converted = clicked && rand() < conv;
+          const m = await r.messages.create({
             campaignId: campaign.id,
-            messageId: m.id,
+            restaurantId: restaurant.id,
             contactId: c.id,
-            code: m.code,
-            customerName: c.name,
-            orderId: `DEMO-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
-            value,
-            items: items.map((it) => ({ name: it.name, qty: 1, price: it.price })),
-            createdAt: at,
+            name: c.name,
+            phone: c.phone,
+            demo: true,
+            code: crypto.randomBytes(5).toString('base64url'),
+            status: ok ? (wasRead ? 'read' : 'delivered') : 'failed',
+            error: ok ? null : 'Número não possui WhatsApp',
+            provider: 'simulator',
+            queuedAt: iso(start),
+            sentAt: iso(sentAt),
+            deliveredAt: ok ? iso(sentAt + 60e3) : null,
+            readAt: wasRead ? iso(sentAt + (5 + rand() * 120) * 60e3) : null,
+            clickedAt: clicked ? iso(sentAt + (10 + rand() * 600) * 60e3) : null,
+            clicks: clicked ? 1 + Math.floor(rand() * 2) : 0,
+            createdAt: iso(start),
           });
-          repos.messages.update(m, { convertedAt: at });
+          if (converted) {
+            const items = [pick(data.menu), pick(data.menu)];
+            const value = Math.round(items.reduce((s, it) => s + it.price, 0) * 0.9 * 100) / 100;
+            const at = iso(new Date(m.clickedAt).getTime() + 8 * 60e3);
+            await r.conversions.create({
+              restaurantId: restaurant.id,
+              campaignId: campaign.id,
+              messageId: m.id,
+              contactId: c.id,
+              code: m.code,
+              customerName: c.name,
+              orderId: `DEMO-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+              value,
+              items: items.map((it) => ({ name: it.name, qty: 1, price: it.price })),
+              createdAt: at,
+            });
+            await r.messages.update(m, { convertedAt: at });
+          }
         }
+      }
+
+      // Rascunho pronto para demonstrar o disparo ao vivo
+      await r.campaigns.create({
+        restaurantId: restaurant.id,
+        name: ri === 0 ? 'Clientes VIP · Menu Degustação' : 'Sábado em Família',
+        objective: ri === 0 ? 'Recompensar melhores clientes' : 'Aumentar pedidos no fim de semana',
+        occasion: ri === 0 ? 'Recorrente' : 'Sábado',
+        coupon: ri === 0 ? 'VIPNONNA' : 'UAI15',
+        message: ri === 0
+          ? '{{primeiro_nome}}, esta semana a {{restaurante}} vai servir um menu degustação de 5 tempos, só para quem já é cliente da casa.\n\nAs reservas e pedidos são pelo site, com o cupom *{{cupom}}*:\n{{link}}'
+          : '{Bom dia|Opa}, {{primeiro_nome}}! Sábado o {{restaurante}} abre às 11h com feijão tropeiro e frango com quiabo no fogão a lenha.\n\nSe pedir pelo site, use o cupom *{{cupom}}*:\n{{link}}',
+        segment: { tags: ri === 0 ? ['vip'] : ['familia', 'fim-de-semana'], match: 'any' },
+        includeFooter: true,
+        status: 'draft',
+        // A da Cantina já foi enviada para o restaurante aprovar
+        ...(ri === 0 ? {
+          approval: { status: 'pending', requestedAt: iso(now - 3 * 3600e3), requestedBy: 'Equipe Studio Coral' },
+          approvalLog: [{ action: 'requested', by: 'Equipe Studio Coral', at: iso(now - 3 * 3600e3), note: 'Menu degustação de outubro. Confere se o cupom está certo?' }],
+        } : {}),
       });
     }
-
-    // Rascunho pronto para demonstrar o disparo ao vivo
-    repos.campaigns.create({
-      restaurantId: restaurant.id,
-      name: ri === 0 ? 'Clientes VIP · Menu Degustação' : 'Sábado em Família',
-      objective: ri === 0 ? 'Recompensar melhores clientes' : 'Aumentar pedidos no fim de semana',
-      occasion: ri === 0 ? 'Recorrente' : 'Sábado',
-      coupon: ri === 0 ? 'VIPNONNA' : 'UAI15',
-      message: ri === 0
-        ? '{{primeiro_nome}}, esta semana a {{restaurante}} vai servir um menu degustação de 5 tempos, só para quem já é cliente da casa.\n\nAs reservas e pedidos são pelo site, com o cupom *{{cupom}}*:\n{{link}}'
-        : '{Bom dia|Opa}, {{primeiro_nome}}! Sábado o {{restaurante}} abre às 11h com feijão tropeiro e frango com quiabo no fogão a lenha.\n\nSe pedir pelo site, use o cupom *{{cupom}}*:\n{{link}}',
-      segment: { tags: ri === 0 ? ['vip'] : ['familia', 'fim-de-semana'], match: 'any' },
-      includeFooter: true,
-      status: 'draft',
-      // A da Cantina já foi enviada para o restaurante aprovar
-      ...(ri === 0 ? {
-        approval: { status: 'pending', requestedAt: iso(now - 3 * 3600e3), requestedBy: 'Equipe Studio Coral' },
-        approvalLog: [{ action: 'requested', by: 'Equipe Studio Coral', at: iso(now - 3 * 3600e3), note: 'Menu degustação de outubro. Confere se o cupom está certo?' }],
-      } : {}),
-    });
   });
-
-  repos.settings.update({});
-  repos.store.flush();
 }
 
 module.exports = { seed };
 
 if (require.main === module) {
-  // eslint-disable-next-line global-require
-  const { buildContainer } = require('./bootstrap');
-  const c = buildContainer();
-  seed(c.resolve('repos'), { reset: process.argv.includes('--reset') });
-  c.resolve('repos').reindexAll();
-  console.log('🌱 Base de demonstração recriada em data/db.json');
+  (async () => {
+    /* eslint-disable global-require */
+    const config = require('./config');
+    const { Database } = require('./db/Database');
+    const { migrate } = require('./db/migrate');
+    const { createRepositories } = require('./db/repositories');
+    /* eslint-enable global-require */
+    const db = await Database.open(config);
+    try {
+      await migrate(db);
+      const repos = createRepositories(db);
+      await repos.settings.load();
+      await seed(repos, { reset: process.argv.includes('--reset') });
+      console.log('🌱 Base de demonstração recriada.');
+    } finally {
+      await db.close();
+    }
+  })().catch((err) => {
+    console.error(`✖ ${err.message}`);
+    process.exit(1);
+  });
 }

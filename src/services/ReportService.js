@@ -1,3 +1,5 @@
+const { AnalyticsService } = require('./AnalyticsService');
+
 const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 
@@ -28,39 +30,50 @@ class ReportService {
   }
 
   /** Meses que têm algum envio para o restaurante (para o seletor). */
-  availableMonths(restaurantId) {
+  async availableMonths(restaurantId) {
     const set = new Set([ReportService.currentMonth()]);
-    for (const m of this.repos.messages.filter((x) => x.restaurantId === restaurantId && x.sentAt)) set.add(m.sentAt.slice(0, 7));
+    for (const m of await this.repos.messages.sentMonths(restaurantId)) set.add(m);
     return [...set].sort().reverse();
   }
 
-  totals(restaurantId, month) {
+  async totals(restaurantId, month) {
     const { start, end } = monthRange(month);
-    const inMonth = (iso) => iso && new Date(iso) >= start && new Date(iso) < end;
-    const messages = this.repos.messages.filter((m) => m.restaurantId === restaurantId && inMonth(m.sentAt));
-    const conversions = this.repos.conversions.filter((c) => c.restaurantId === restaurantId && c.campaignId && inMonth(c.createdAt));
-    return { messages, conversions, summary: this.analytics.summarize(messages, conversions), inMonth, start, end };
+    const from = start.toISOString();
+    const to = end.toISOString();
+    const [counts, sales] = await Promise.all([
+      this.repos.messages.summary({ restaurantId, sentFrom: from, sentTo: to }),
+      this.repos.conversions.summary({ restaurantId, attributedOnly: true, from, to }),
+    ]);
+    return { summary: AnalyticsService.withRates(counts, sales), start, end, from, to };
   }
 
-  monthly({ restaurantId, month = ReportService.currentMonth() }) {
-    const restaurant = this.repos.restaurants.get(restaurantId);
+  async monthly({ restaurantId, month = ReportService.currentMonth() }) {
+    const restaurant = await this.repos.restaurants.get(restaurantId);
     if (!restaurant) throw Object.assign(new Error('Restaurante não encontrado.'), { status: 404 });
 
-    const cur = this.totals(restaurantId, month);
-    const prev = this.totals(restaurantId, shift(month, -1)).summary;
+    const cur = await this.totals(restaurantId, month);
+    const prev = (await this.totals(restaurantId, shift(month, -1))).summary;
     const { y, m } = monthRange(month);
     const s = cur.summary;
+    const inMonth = (iso) => iso && new Date(iso) >= cur.start && new Date(iso) < cur.end;
+
+    const [sent, orders, started, base] = await Promise.all([
+      this.repos.messages.sentBetween(restaurantId, cur.from, cur.to),
+      this.repos.conversions.attributedBetween(restaurantId, cur.from, cur.to),
+      this.repos.campaigns.startedBetween(restaurantId, cur.from, cur.to),
+      this.repos.contacts.stats({ restaurantId, from: cur.from, to: cur.to }),
+    ]);
 
     // Dia a dia
     const days = new Date(y, m, 0).getDate();
     const daily = Array.from({ length: days }, (_, i) => ({ day: i + 1, sent: 0, clicks: 0, orders: 0, revenue: 0 }));
-    for (const msg of cur.messages) {
+    for (const msg of sent) {
       daily[new Date(msg.sentAt).getDate() - 1].sent += 1;
-      if (cur.inMonth(msg.clickedAt)) daily[new Date(msg.clickedAt).getDate() - 1].clicks += 1;
+      if (inMonth(msg.clickedAt)) daily[new Date(msg.clickedAt).getDate() - 1].clicks += 1;
     }
     const weekdays = WEEKDAYS.map((name) => ({ name, orders: 0, revenue: 0 }));
     const items = {};
-    for (const c of cur.conversions) {
+    for (const c of orders) {
       const d = new Date(c.createdAt);
       daily[d.getDate() - 1].orders += 1;
       daily[d.getDate() - 1].revenue += Number(c.value) || 0;
@@ -74,19 +87,10 @@ class ReportService {
       }
     }
 
-    const campaigns = this.repos.campaigns
-      .filter((c) => c.restaurantId === restaurantId && cur.inMonth(c.startedAt))
-      .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-      .map((c) => ({ id: c.id, name: c.name, objective: c.objective, startedAt: c.startedAt, mediaUrl: c.mediaUrl || null, stats: this.analytics.campaignStats(c.id) }));
+    const stats = await this.analytics.statsForCampaigns(started.map((c) => c.id));
+    const campaigns = started.map((c) => ({ id: c.id, name: c.name, objective: c.objective, startedAt: c.startedAt, mediaUrl: c.mediaUrl || null, stats: stats.get(c.id) }));
     const best = campaigns.slice().sort((a, b) => b.stats.revenue - a.stats.revenue)[0] || null;
     const bestDay = weekdays.slice().sort((a, b) => b.orders - a.orders)[0];
-
-    const contacts = this.repos.contacts.filter((c) => c.restaurantId === restaurantId);
-    const base = {
-      authorized: contacts.filter((c) => c.optIn && !c.optedOut).length,
-      newThisMonth: contacts.filter((c) => cur.inMonth(c.createdAt)).length,
-      optOutsThisMonth: contacts.filter((c) => cur.inMonth(c.optedOutAt)).length,
-    };
 
     return {
       generatedAt: new Date().toISOString(),
@@ -106,7 +110,7 @@ class ReportService {
       best: best && best.stats.revenue > 0 ? { name: best.name, revenue: best.stats.revenue, orders: best.stats.orders } : null,
       bestWeekday: bestDay && bestDay.orders ? bestDay : null,
       topItems: Object.values(items).sort((a, b) => b.qty - a.qty).slice(0, 6),
-      base,
+      base: { authorized: base.authorized, newThisMonth: base.createdInRange, optOutsThisMonth: base.optedOutInRange },
     };
   }
 }
