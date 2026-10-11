@@ -4076,17 +4076,17 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
       });
     },
     async close() {
+      const atMost = (ms, promise) => Promise.race([promise, new Promise((r) => { setTimeout(r, ms).unref(); })]);
       dispatch.stop();
+      // Espera o envio em andamento (no máximo 3 s) antes de desligar o canal
+      await atMost(3000, dispatch.idle());
       // Fecha o navegador do WPPConnect mantendo a sessão salva
-      await Promise.race([
-        Promise.all([messaging.stop().catch(() => {}), container.resolve('pdf').close()]),
-        new Promise((r) => { setTimeout(r, 3000).unref(); }),
-      ]);
+      await atMost(3000, Promise.all([messaging.stop().catch(() => {}), container.resolve('pdf').close()]));
       if (server) {
         server.closeAllConnections?.();
         await new Promise((r) => { server.close(() => r()); });
       }
-      await dispatch.idle(); // nada pode estar usando o banco quando ele fechar
+      await atMost(3000, dispatch.idle()); // nada pode estar usando o banco quando ele fechar
       await db.close();
     },
   };
