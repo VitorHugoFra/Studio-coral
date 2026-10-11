@@ -14,9 +14,12 @@ class Database {
     this.driver = driver;
   }
 
-  /** Abre o banco conforme a configuração: DATABASE_URL ou PGlite. */
-  static async open({ databaseUrl = '', pgliteDir = 'memory://', databasePoolMax = 10 } = {}) {
-    if (databaseUrl) return new Database(await PgDriver.connect(databaseUrl, databasePoolMax));
+  /**
+   * Abre o banco conforme a configuração: DATABASE_URL ou PGlite.
+   * O logger (padrão: console) recebe os avisos do pool do pg.
+   */
+  static async open({ databaseUrl = '', pgliteDir = 'memory://', databasePoolMax = 10, logger = console } = {}) {
+    if (databaseUrl) return new Database(await PgDriver.connect(databaseUrl, databasePoolMax, logger));
     return new Database(await PgliteDriver.open(pgliteDir));
   }
 
@@ -50,18 +53,32 @@ class Database {
     return this.driver.tx((inner) => fn(new Database(inner)));
   }
 
+  /** Fecha o banco. Pode ser chamado mais de uma vez (SIGINT e SIGTERM): só a primeira chamada fecha de fato. */
   close() {
-    return this.driver.close();
+    this.closing ??= this.driver.close();
+    return this.closing;
   }
 }
 
-const maskUrl = (url) => url.replace(/\/\/([^:/@]+):([^@]*)@/, '//$1:***@');
+/** Endereço do banco sem a senha, para as mensagens de erro. */
+function maskUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.password) u.password = '***';
+    for (const key of ['password', 'sslpassword']) if (u.searchParams.has(key)) u.searchParams.set(key, '***');
+    return u.toString();
+  } catch {
+    return '(DATABASE_URL inválida)';
+  }
+}
 
 class PgDriver {
-  static async connect(url, max) {
+  static async connect(url, max, logger) {
     // eslint-disable-next-line global-require
     const { Pool } = require('pg');
-    const pool = new Pool({ connectionString: url, max });
+    const pool = new Pool({ connectionString: url, max, connectionTimeoutMillis: 10000 });
+    // Conexão ociosa que cai (reinício do banco, rede) não pode derrubar o servidor: o pool reconecta na próxima consulta
+    pool.on('error', (err) => logger.error(`[db] Conexão ociosa com o PostgreSQL caiu: ${err.message}`));
     try {
       await pool.query('SELECT 1');
     } catch (err) {
@@ -159,8 +176,11 @@ class PgliteDriver {
   }
 
   async close() {
-    await this.lite.close();
-    this.release();
+    try {
+      await this.lite.close();
+    } finally {
+      this.release();
+    }
   }
 }
 
@@ -195,7 +215,7 @@ function lockDir(dir) {
   if (fs.existsSync(file)) {
     const pid = Number(fs.readFileSync(file, 'utf8'));
     if (pid && pid !== process.pid && isAlive(pid)) {
-      throw new Error(`O banco local (${dir}) já está aberto por outro processo (pid ${pid}). Pare o servidor antes de rodar este comando.`);
+      throw new Error(`O banco local (${dir}) já está aberto por outro processo (pid ${pid}). Pare o servidor antes de rodar este comando. Se ele já estiver parado, apague ${file}.`);
     }
   }
   fs.mkdirSync(dir, { recursive: true });
