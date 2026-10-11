@@ -80,6 +80,7 @@ describe('campanhas e aprovação', () => {
     await sleep(5);
     const b = await create({ name: 'Ordem B' });
     const names = (await ctx.agency.get(`/api/campaigns?restaurantId=${r.id}`)).data.map((c) => c.name);
+    assert.ok(names.includes(a.name) && names.includes(b.name));
     assert.ok(names.indexOf(b.name) < names.indexOf(a.name));
     assert.deepEqual((await ctx.agency.get(`/api/campaigns?restaurantId=${other.id}`)).data, []);
   });
@@ -162,32 +163,34 @@ describe('campanhas e aprovação', () => {
 
   it('pausa, retoma e cancela uma campanha em andamento', async () => {
     await ctx.agency.post('/api/messaging/stop', {});
-    const c = await create({ name: 'Andamento', message: 'Oi {{primeiro_nome}}' });
-    await approve(c.id);
-    const started = (await ctx.agency.post(`/api/campaigns/${c.id}/start`, {})).data;
-    assert.equal(started.status, 'sending');
-    assert.equal(started.audienceSize, 3);
-    assert.equal(started.provider, 'simulator');
-    await waitFor(async () => (await ctx.agency.get(`/api/campaigns/${c.id}`)).data.waitingReason === 'Aguardando conexão com o WhatsApp', { message: 'aviso de espera' });
+    try {
+      const c = await create({ name: 'Andamento', message: 'Oi {{primeiro_nome}}' });
+      await approve(c.id);
+      const started = (await ctx.agency.post(`/api/campaigns/${c.id}/start`, {})).data;
+      assert.equal(started.status, 'sending');
+      assert.equal(started.audienceSize, 3);
+      assert.equal(started.provider, 'simulator');
+      await waitFor(async () => (await ctx.agency.get(`/api/campaigns/${c.id}`)).data.waitingReason === 'Aguardando conexão com o WhatsApp', { message: 'aviso de espera' });
 
-    assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/start`, {})).data.error, 'Esta campanha já foi iniciada.');
-    assert.equal((await ctx.agency.put(`/api/campaigns/${c.id}`, { name: 'x' })).data.error, 'Campanhas já disparadas não podem ser editadas. Duplique-a.');
+      assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/start`, {})).data.error, 'Esta campanha já foi iniciada.');
+      assert.equal((await ctx.agency.put(`/api/campaigns/${c.id}`, { name: 'x' })).data.error, 'Campanhas já disparadas não podem ser editadas. Duplique-a.');
 
-    assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/pause`, {})).data.status, 'paused');
-    assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/pause`, {})).data.error, 'Só é possível pausar campanhas em andamento.');
-    assert.equal((await ctx.agency.del(`/api/campaigns/${c.id}`)).data.error, 'Cancele a campanha antes de excluí-la.');
-    assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/resume`, {})).data.status, 'sending');
-    assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/resume`, {})).data.error, 'A campanha não está pausada.');
+      assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/pause`, {})).data.status, 'paused');
+      assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/pause`, {})).data.error, 'Só é possível pausar campanhas em andamento.');
+      assert.equal((await ctx.agency.del(`/api/campaigns/${c.id}`)).data.error, 'Cancele a campanha antes de excluí-la.');
+      assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/resume`, {})).data.status, 'sending');
+      assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/resume`, {})).data.error, 'A campanha não está pausada.');
 
-    const canceled = (await ctx.agency.post(`/api/campaigns/${c.id}/cancel`, {})).data;
-    assert.equal(canceled.status, 'canceled');
-    assert.ok(canceled.completedAt);
-    const messages = (await ctx.agency.get(`/api/campaigns/${c.id}/messages`)).data;
-    assert.equal(messages.length, 3);
-    assert.ok(messages.every((m) => m.status === 'skipped' && m.error === 'Campanha cancelada'));
-    assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/cancel`, {})).data.error, 'A campanha já foi encerrada.');
-
-    await ctx.agency.post('/api/messaging/start', {});
+      const canceled = (await ctx.agency.post(`/api/campaigns/${c.id}/cancel`, {})).data;
+      assert.equal(canceled.status, 'canceled');
+      assert.ok(canceled.completedAt);
+      const messages = (await ctx.agency.get(`/api/campaigns/${c.id}/messages`)).data;
+      assert.equal(messages.length, 3);
+      assert.ok(messages.every((m) => m.status === 'skipped' && m.error === 'Campanha cancelada'));
+      assert.equal((await ctx.agency.post(`/api/campaigns/${c.id}/cancel`, {})).data.error, 'A campanha já foi encerrada.');
+    } finally {
+      await ctx.agency.post('/api/messaging/start', {});
+    }
   });
 
   it('duplica sem levar a aprovação', async () => {

@@ -14,7 +14,7 @@ describe('disparo, link rastreável, pedidos e descadastro', () => {
 
   before(async () => {
     ctx = await startApp();
-    r = (await ctx.agency.post('/api/restaurants', { name: 'Cantina do Disparo', requireApproval: false, coupon: 'CASA5' })).data;
+    r = (await ctx.agency.post('/api/restaurants', { name: 'Cantina do Disparo', requireApproval: false, coupon: 'CASA5', goals: 'Metas internas da agência', audience: 'Público interno', tone: 'Tom interno' })).data;
     for (const [i, name] of ['Marina Souza', 'Lucas Lima', 'Ana Costa'].entries()) {
       contacts.push((await ctx.agency.post('/api/contacts', { restaurantId: r.id, name, phone: phone(i + 1) })).data);
     }
@@ -128,7 +128,10 @@ describe('disparo, link rastreável, pedidos e descadastro', () => {
     assert.equal(site.coupon, 'CASA5');
     assert.deepEqual(site.banners, []);
     assert.equal(site.logoUrl, null);
+    // campos internos do diagnóstico não saem na rota pública
     assert.equal(site.goals, undefined);
+    assert.equal(site.audience, undefined);
+    assert.equal(site.tone, undefined);
     assert.equal((await pub.get('/api/public/restaurants/nao-existe')).status, 404);
   });
 

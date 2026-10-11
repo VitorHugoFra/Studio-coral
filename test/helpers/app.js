@@ -5,6 +5,9 @@ const baseConfig = require('../../src/config');
 const { createApp } = require('../../src/app');
 const { SimulatorProvider } = require('../../src/messaging/providers/SimulatorProvider');
 
+/** Logger dos testes: só mostra avisos e erros. */
+const QUIET = { log() {}, info() {}, warn: console.warn, error: console.error };
+
 /** Simulador sem falhas aleatórias e com tempos mínimos. */
 const FAST_SIMULATOR = {
   failRate: 0,
@@ -82,6 +85,7 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR } = {}) {
     },
   };
   const overrides = {
+    logger: () => QUIET,
     'messaging.factories': () => ({ simulator: () => new SimulatorProvider(simulator) }),
   };
   let instance = null;

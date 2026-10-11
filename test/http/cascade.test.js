@@ -37,15 +37,18 @@ describe('exclusões em cascata', () => {
     const r = (await ctx.agency.post('/api/restaurants', { name: 'Casa Dois', requireApproval: false })).data;
     await ctx.agency.post('/api/contacts', { restaurantId: r.id, name: 'Cliente 20', phone: phone(20) });
     await ctx.agency.post('/api/messaging/stop', {});
-    const c = (await ctx.agency.post('/api/campaigns', { restaurantId: r.id, name: 'Travada', message: 'Oi' })).data;
-    await ctx.agency.post(`/api/campaigns/${c.id}/start`, {});
-    const blocked = await ctx.agency.del(`/api/restaurants/${r.id}`);
-    assert.equal(blocked.status, 400);
-    assert.equal(blocked.data.error, 'Há campanhas em andamento para este restaurante.');
-    await ctx.agency.post(`/api/campaigns/${c.id}/cancel`, {});
-    assert.deepEqual((await ctx.agency.del(`/api/restaurants/${r.id}`)).data, { ok: true });
-    await ctx.agency.post('/api/messaging/start', {});
-    await waitFor(async () => (await ctx.agency.get('/api/messaging/status')).data.state === 'connected', { message: 'reconectar' });
+    try {
+      const c = (await ctx.agency.post('/api/campaigns', { restaurantId: r.id, name: 'Travada', message: 'Oi' })).data;
+      await ctx.agency.post(`/api/campaigns/${c.id}/start`, {});
+      const blocked = await ctx.agency.del(`/api/restaurants/${r.id}`);
+      assert.equal(blocked.status, 400);
+      assert.equal(blocked.data.error, 'Há campanhas em andamento para este restaurante.');
+      await ctx.agency.post(`/api/campaigns/${c.id}/cancel`, {});
+      assert.deepEqual((await ctx.agency.del(`/api/restaurants/${r.id}`)).data, { ok: true });
+    } finally {
+      await ctx.agency.post('/api/messaging/start', {});
+      await waitFor(async () => (await ctx.agency.get('/api/messaging/status')).data.state === 'connected', { message: 'reconectar' });
+    }
   });
 
   it('excluir restaurante apaga contatos, campanhas, pedidos e acessos', async () => {
@@ -59,7 +62,9 @@ describe('exclusões em cascata', () => {
     assert.equal((await ctx.agency.get(`/api/restaurants/${r.id}`)).status, 404);
     assert.deepEqual((await ctx.agency.get(`/api/contacts?restaurantId=${r.id}`)).data, []);
     assert.deepEqual((await ctx.agency.get(`/api/campaigns?restaurantId=${r.id}`)).data, []);
-    assert.equal((await ctx.agency.get(`/api/dashboard?restaurantId=${r.id}`)).data.totals.audience, 0);
+    const d = (await ctx.agency.get(`/api/dashboard?restaurantId=${r.id}`)).data;
+    assert.equal(d.totals.audience, 0);
+    assert.equal(d.totals.orders, 0, 'os pedidos saem junto com o restaurante');
     assert.equal(await location(message.code), '/');
     assert.equal((await owner.get('/api/auth/me')).status, 401);
     assert.equal((await ctx.client().login('dono@casatres.com.br', 'senha-dono-123')).status, 401);

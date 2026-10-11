@@ -92,7 +92,9 @@ describe('painel, relatório mensal e configurações', () => {
   });
 
   it('meses disponíveis e validações do relatório', async () => {
-    assert.equal((await ctx.agency.get(`/api/reports/months?restaurantId=${a.id}`)).data[0], month);
+    const months = (await ctx.agency.get(`/api/reports/months?restaurantId=${a.id}`)).data;
+    assert.ok(months.includes(month), JSON.stringify(months));
+    assert.deepEqual(months, months.slice().sort().reverse());
     const bad = await ctx.agency.get(`/api/reports/monthly?restaurantId=${a.id}&month=2026-13`);
     assert.equal(bad.status, 400);
     assert.equal(bad.data.error, 'Mês inválido. Use o formato AAAA-MM.');
