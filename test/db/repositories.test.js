@@ -70,4 +70,27 @@ describe('repositórios: restaurantes, acessos e configurações', () => {
     assert.equal(fresh.settings.get().footer, 'Novo rodapé');
     assert.equal(fresh.settings.get().provider, 'simulator');
   });
+
+  it('dentro de repos.tx as configurações só podem ser lidas', async () => {
+    await repos.tx(async (r) => {
+      assert.equal(r.settings.get().dailyLimit, repos.settings.get().dailyLimit);
+      await assert.rejects(r.settings.update({ footer: 'x' }), /não podem ser alteradas dentro de uma transação/);
+      await assert.rejects(r.settings.load(), /não podem ser recarregadas dentro de uma transação/);
+    });
+  });
+
+  it('repos.tx confirma ao terminar e desfaz em erro', async () => {
+    await repos.tx(async (r) => { await r.restaurants.create({ name: 'Confirmado', slug: 'confirmado' }); });
+    assert.ok(await repos.restaurants.bySlug('confirmado'));
+    await assert.rejects(repos.tx(async (r) => {
+      await r.restaurants.create({ name: 'Desfeito', slug: 'desfeito' });
+      throw new Error('falhou');
+    }), /falhou/);
+    assert.equal(await repos.restaurants.bySlug('desfeito'), null);
+  });
+
+  it('ids que não são UUID não chegam ao SQL', async () => {
+    assert.equal((await repos.restaurants.counts(['nao-e-uuid'])).size, 0);
+    assert.equal(await repos.restaurants.slugTaken('cantina', 'nao-e-uuid'), true);
+  });
 });
