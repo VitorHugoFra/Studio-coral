@@ -7,10 +7,7 @@ const normalizeText = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g
 const today = () => new Date().toISOString().slice(0, 10);
 
 /** Chave de comparação de telefone: DDD + últimos 8 dígitos (ignora o 9º dígito). */
-const phoneKey = (phone) => {
-  const n = MessagingProvider.normalizePhone(phone).replace(/^55/, '');
-  return n.length >= 10 ? `${n.slice(0, 2)}${n.slice(-8)}` : n;
-};
+const phoneKey = (phone) => MessagingProvider.phoneKey(phone);
 
 /**
  * Fila de disparo das campanhas.

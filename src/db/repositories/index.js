@@ -1,5 +1,6 @@
 const { RestaurantsRepo } = require('./restaurants');
 const { UsersRepo } = require('./users');
+const { ContactsRepo } = require('./contacts');
 const { SettingsRepo, DEFAULT_SETTINGS } = require('./settings');
 
 /**
@@ -24,6 +25,7 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     settings,
     restaurants: new RestaurantsRepo(db),
     users: new UsersRepo(db),
+    contacts: new ContactsRepo(db),
     tx(fn) {
       return db.tx((t) => fn(createRepositories(t, { settings: readOnlySettings(settings) })));
     },

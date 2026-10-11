@@ -67,6 +67,12 @@ class MessagingProvider extends EventEmitter {
     return digits;
   }
 
+  /** Chave de comparação de telefone: DDD + últimos 8 dígitos (ignora o 9º dígito). */
+  static phoneKey(phone) {
+    const n = MessagingProvider.normalizePhone(phone).replace(/^55/, '');
+    return n.length >= 10 ? `${n.slice(0, 2)}${n.slice(-8)}` : n;
+  }
+
   /** Atualiza o estado e notifica os ouvintes. */
   setState(state, extra = {}) {
     this.state = { ...this.state, qr: null, message: null, ...extra, state, updatedAt: new Date().toISOString() };
