@@ -3167,6 +3167,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - `summary({ restaurantId, campaignId, attributedOnly, from, to }) → { orders, revenue }` e `summaryByCampaign(ids) → Map`;
     - `attributedSince({ restaurantId, since })`, `recentAttributed({ restaurantId, limit })`, `attributedBetween(restaurantId, from, to)`.
   - Contagens brutas de `summary` (chaves exatas): `{ audience, queued, sent, delivered, read, failed, skipped, clicked, clicks, replied, optOuts }`.
+  - `repos.reset()`: apaga todos os dados e volta as configurações ao padrão (usado pelo `npm run seed`).
 
 - [ ] **Step 1: Escreva o teste**
 
@@ -3751,10 +3752,28 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     tx(fn) {
       return db.tx((t) => fn(createRepositories(t, { settings })));
     },
+    /** Apaga todos os dados (as tabelas filhas vão junto) e volta as configurações ao padrão (npm run seed). */
+    async reset() {
+      await db.exec("TRUNCATE restaurants, users, contacts, campaigns, messages, conversions CASCADE; UPDATE settings SET data = '{}' WHERE id = 1;");
+      await settings.load();
+    },
   };
 }
 
 module.exports = { createRepositories, DEFAULT_SETTINGS };
+```
+
+E acrescente, como **último** teste de `test/db/campaigns-messages.test.js` (ele apaga o banco do arquivo):
+
+```js
+  it('reset apaga todos os dados e volta as configurações ao padrão', async () => {
+    await repos.settings.load();
+    await repos.settings.update({ footer: 'Outro rodapé' });
+    await repos.reset();
+    assert.equal(await repos.restaurants.count(), 0);
+    assert.equal(await repos.messages.count(), 0);
+    assert.equal(repos.settings.get().footer, 'Responda SAIR para não receber mais mensagens.');
+  });
 ```
 
 - [ ] **Step 7: Rode e veja passar**
@@ -5472,11 +5491,7 @@ Mantenha as linhas 1–89 (cabeçalho, `rng`, `RESTAURANTS`, `IMAGES`, `BANNERS`
 
 ```js
 async function seed(repos, { reset = false } = {}) {
-  if (reset) {
-    // Apaga tudo (as tabelas filhas vão junto) e volta as configurações ao padrão
-    await repos.db.exec("TRUNCATE restaurants, users, contacts, campaigns, messages, conversions CASCADE; UPDATE settings SET data = '{}' WHERE id = 1;");
-    await repos.settings.load();
-  }
+  if (reset) await repos.reset();
   const rand = rng(42);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const now = Date.now();
