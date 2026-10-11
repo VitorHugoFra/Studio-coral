@@ -5,7 +5,7 @@ const { MessagingProvider } = require('../../messaging/MessagingProvider');
 const table = defineTable({
   name: 'contacts',
   columns: ['restaurantId', 'name', 'phone', 'tags', 'optIn', 'optInSource', 'optedOut', 'optedOutAt', 'notes', 'demo'],
-  hidden: ['phoneKey'],
+  hidden: ['phoneKey', 'seq'],
   unique: { contacts_restaurant_phone: 'Este telefone já está na base.' },
 });
 
@@ -30,11 +30,11 @@ class ContactsRepo extends Repository {
     if (status === 'authorized') where.push('opt_in AND NOT opted_out');
     if (status === 'optedOut') where.push('opted_out');
     if (status === 'pending') where.push('NOT opt_in');
-    return this.where(where.join(' AND ') || 'TRUE', params);
+    return this.where(where.join(' AND ') || 'TRUE', params, 'seq');
   }
 
   async byRestaurant(restaurantId) {
-    return isUuid(restaurantId) ? this.where('restaurant_id = $1', [restaurantId]) : [];
+    return isUuid(restaurantId) ? this.where('restaurant_id = $1', [restaurantId], 'seq') : [];
   }
 
   async findByPhone(restaurantId, phone) {
@@ -44,7 +44,7 @@ class ContactsRepo extends Repository {
 
   /** O mesmo cliente em qualquer restaurante (respostas como "SAIR"). */
   byPhoneKey(key) {
-    return this.where('phone_key = $1', [key]);
+    return this.where('phone_key = $1', [key], 'seq');
   }
 
   /** Público de uma campanha: autorizados do restaurante, filtrados pelas tags. */
@@ -54,7 +54,8 @@ class ContactsRepo extends Repository {
     const params = [restaurantId];
     let condition = 'restaurant_id = $1 AND opt_in AND NOT opted_out';
     if (tags.length) condition += ` AND tags ${segment.match === 'all' ? '@>' : '&&'} $${params.push(tags)}::text[]`;
-    return this.where(condition, params);
+    // ordem de cadastro/importação (seq), como o envio na versão com JSON
+    return this.where(condition, params, 'seq');
   }
 
   async tagCounts(restaurantId) {

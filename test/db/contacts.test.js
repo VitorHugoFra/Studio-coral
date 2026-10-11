@@ -96,6 +96,39 @@ describe('repositório de contatos', () => {
     assert.deepEqual(await repos.contacts.stats({ restaurantId: 'xyz' }), { total: 0, authorized: 0, optedOut: 0, createdInRange: 0, optedOutInRange: 0 });
   });
 
+  it('descadastro ignora ids que não são UUID', async () => {
+    const guarda = await repos.restaurants.create({ name: 'Guarda', slug: 'guarda' });
+    const [gui] = await repos.contacts.insertMany([{ restaurantId: guarda.id, name: 'Gui', phone: '5531966660001', optIn: true }]);
+    assert.deepEqual(await repos.contacts.markOptedOut(['nao-e-uuid'], new Date().toISOString()), []);
+    const changed = await repos.contacts.markOptedOut([gui.id, 'nao-e-uuid'], new Date().toISOString());
+    assert.equal(changed.length, 1);
+    assert.equal(changed[0].id, gui.id);
+    assert.equal(changed[0].optedOut, true);
+  });
+
+  it('público sai na ordem de cadastro, não pela data de criação', async () => {
+    const ordem = await repos.restaurants.create({ name: 'Ordem', slug: 'ordem' });
+    await repos.contacts.insertMany([
+      { restaurantId: ordem.id, name: 'Terceiro', phone: '5531977770001', optIn: true, createdAt: '2026-01-03T00:00:00.000Z' },
+      { restaurantId: ordem.id, name: 'Primeiro', phone: '5531977770002', optIn: true, createdAt: '2026-01-02T00:00:00.000Z' },
+      { restaurantId: ordem.id, name: 'Segundo', phone: '5531977770003', optIn: true, createdAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+    const publico = await repos.contacts.audience(ordem.id, {});
+    assert.deepEqual(publico.map((c) => c.name), ['Terceiro', 'Primeiro', 'Segundo']);
+    assert.ok(publico.every((c) => !Object.hasOwn(c, 'seq')));
+  });
+
+  it('período das estatísticas: início incluído, fim excluído', async () => {
+    const periodo = await repos.restaurants.create({ name: 'Período', slug: 'periodo' });
+    const from = '2026-02-01T00:00:00.000Z';
+    const to = '2026-02-02T00:00:00.000Z';
+    await repos.contacts.insertMany([
+      { restaurantId: periodo.id, name: 'No início', phone: '5531955550001', createdAt: from },
+      { restaurantId: periodo.id, name: 'No fim', phone: '5531955550002', createdAt: to },
+    ]);
+    assert.equal((await repos.contacts.stats({ restaurantId: periodo.id, from, to })).createdInRange, 1);
+  });
+
   it('excluir o restaurante apaga os contatos dele', async () => {
     await repos.restaurants.remove(r2.id);
     assert.deepEqual(names(await repos.contacts.byPhoneKey('3199000001')), ['Ana']);

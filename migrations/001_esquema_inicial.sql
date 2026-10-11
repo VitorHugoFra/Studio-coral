@@ -46,6 +46,7 @@ CREATE INDEX users_restaurant ON users (restaurant_id);
 
 CREATE TABLE contacts (
   id uuid PRIMARY KEY,
+  seq bigint GENERATED ALWAYS AS IDENTITY,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz,
   restaurant_id uuid NOT NULL REFERENCES restaurants (id) ON DELETE CASCADE,
