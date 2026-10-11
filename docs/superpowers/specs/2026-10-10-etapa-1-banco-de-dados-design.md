@@ -116,7 +116,9 @@ Todas as tabelas têm `id uuid PRIMARY KEY`, `created_at timestamptz NOT NULL DE
 
 ## Migração dos dados atuais
 
-`npm run db:import-json -- [caminho]` (padrão `data/db.json`):
+**Primeira subida com o banco vazio:** se existir `data/db.json`, ele é importado automaticamente em vez de criar os dados de demonstração. O arquivo é mantido como cópia. Assim, quem atualizar o sistema não perde o que tinha.
+
+`npm run db:import-json -- [caminho]` (padrão `data/db.json`) faz o mesmo à mão:
 - Lê o JSON e insere tudo numa transação, coleção por coleção, respeitando as dependências: restaurantes → usuários → contatos → campanhas → mensagens → pedidos → configurações.
 - `ON CONFLICT (id) DO NOTHING`: rodar de novo não duplica.
 - **Referências quebradas:** o JSON não tem integridade. Excluir um contato hoje deixa as mensagens dele. Regras:
