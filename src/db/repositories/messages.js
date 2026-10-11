@@ -30,8 +30,6 @@ const fromSummary = (r) => ({
   skipped: r.skipped, clicked: r.clicked, clicks: r.clicks, replied: r.replied, optOuts: r.opt_outs,
 });
 
-const iso = (value) => (value ? new Date(value).toISOString() : null);
-
 class MessagesRepo extends Repository {
   constructor(db) {
     super(db, table);
@@ -61,6 +59,7 @@ class MessagesRepo extends Repository {
 
   /** Reserva a próxima mensagem da fila (atômico: a mesma nunca é entregue duas vezes). */
   async claimNext(campaignId) {
+    if (!isUuid(campaignId)) return null;
     return this.map(await this.db.one(`
       UPDATE messages SET status = 'sending', updated_at = now()
       WHERE id = (
@@ -71,10 +70,12 @@ class MessagesRepo extends Repository {
   }
 
   async hasQueued(campaignId) {
+    if (!isUuid(campaignId)) return false;
     return !!(await this.db.one("SELECT 1 FROM messages WHERE campaign_id = $1 AND status = 'queued' LIMIT 1", [campaignId]));
   }
 
   async skipQueued(campaignId, error) {
+    if (!isUuid(campaignId)) return [];
     return this.mapAll(await this.db.many("UPDATE messages SET status = 'skipped', error = $2, updated_at = now() WHERE campaign_id = $1 AND status = 'queued' RETURNING *", [campaignId, error]));
   }
 
@@ -84,6 +85,7 @@ class MessagesRepo extends Repository {
 
   /** Envio aceito pelo provedor; uma confirmação que já chegou (entregue/lida) é mantida. */
   async markSent(id, { provider, providerMessageId, sentAt }) {
+    if (!isUuid(id)) return null;
     return this.map(await this.db.one(`
       UPDATE messages SET
         status = CASE WHEN status IN ('delivered', 'read') THEN status ELSE 'sent' END,
@@ -109,18 +111,21 @@ class MessagesRepo extends Repository {
   }
 
   async registerClick(id, at) {
+    if (!isUuid(id)) return null;
     return this.map(await this.db.one('UPDATE messages SET clicks = clicks + 1, clicked_at = COALESCE(clicked_at, $2), last_click_at = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, at]));
   }
 
   lastSentToPhoneKey(key) {
-    return this.first('phone_key = $1 AND sent_at IS NOT NULL', [key], 'sent_at DESC');
+    return this.first('phone_key = $1 AND sent_at IS NOT NULL', [key], 'sent_at DESC, seq');
   }
 
   async registerReply(id, { reply, optOut, at }) {
+    if (!isUuid(id)) return null;
     return this.map(await this.db.one('UPDATE messages SET replied_at = $2, reply = $3, opt_out = $4, updated_at = now() WHERE id = $1 AND replied_at IS NULL RETURNING *', [id, at, reply, optOut]));
   }
 
   async markConverted(id, at) {
+    if (!isUuid(id)) return null;
     return this.map(await this.db.one('UPDATE messages SET converted_at = $2, updated_at = now() WHERE id = $1 AND converted_at IS NULL RETURNING *', [id, at]));
   }
 
@@ -149,13 +154,13 @@ class MessagesRepo extends Repository {
       SELECT sent_at, read_at, clicked_at FROM messages
       WHERE ($1::uuid IS NULL OR restaurant_id = $1::uuid)
         AND (sent_at >= $2 OR read_at >= $2 OR clicked_at >= $2)`, [scopeId(restaurantId), since]);
-    return rows.map((r) => ({ sentAt: iso(r.sent_at), readAt: iso(r.read_at), clickedAt: iso(r.clicked_at) }));
+    return this.mapAll(rows);
   }
 
   /** Envios do período (relatório mensal): data de envio e de clique. */
   async sentBetween(restaurantId, from, to) {
     const rows = await this.db.many('SELECT sent_at, clicked_at FROM messages WHERE restaurant_id = $1 AND sent_at >= $2 AND sent_at < $3', [scopeId(restaurantId), from, to]);
-    return rows.map((r) => ({ sentAt: iso(r.sent_at), clickedAt: iso(r.clicked_at) }));
+    return this.mapAll(rows);
   }
 
   /** Meses (AAAA-MM, em UTC, como o antigo sentAt.slice(0, 7)) com algum envio. */

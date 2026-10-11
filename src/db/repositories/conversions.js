@@ -45,7 +45,7 @@ class ConversionsRepo extends Repository {
 
   /** Últimos pedidos atribuídos a campanhas. */
   async recentAttributed({ restaurantId, limit = 6 }) {
-    return this.mapAll(await this.db.many('SELECT * FROM conversions WHERE campaign_id IS NOT NULL AND ($1::uuid IS NULL OR restaurant_id = $1::uuid) ORDER BY created_at DESC LIMIT $2', [scopeId(restaurantId), limit]));
+    return this.mapAll(await this.db.many('SELECT * FROM conversions WHERE campaign_id IS NOT NULL AND ($1::uuid IS NULL OR restaurant_id = $1::uuid) ORDER BY created_at DESC, id LIMIT $2', [scopeId(restaurantId), limit]));
   }
 
   /** Pedidos atribuídos no período (relatório mensal). */

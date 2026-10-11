@@ -160,6 +160,8 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
     assert.equal((await repos.messages.summary({ restaurantId: restaurant.id })).audience, 3);
     assert.equal((await repos.messages.summary({ restaurantId: 'xyz' })).audience, 0);
     assert.equal((await repos.messages.summary({ restaurantId: restaurant.id, sentFrom: at(60000) })).sent, 0);
+    assert.equal((await repos.messages.summary({ campaignId: c.id, sentTo: at(-60000) })).sent, 0, 'envio depois do fim do período não conta');
+    assert.equal((await repos.messages.summary({ campaignId: c.id, sentTo: at(60000) })).sent, 1);
     assert.ok((await repos.messages.countSentSince(at(-60000))) >= 1);
   });
 
@@ -171,6 +173,9 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
     await repos.messages.registerClick(m.id, '2026-04-01T10:00:00.000Z');
     assert.deepEqual(await repos.messages.sentMonths(restaurant.id), ['2026-03']);
     assert.deepEqual(await repos.messages.sentBetween(restaurant.id, '2026-03-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z'), [{ sentAt: '2026-03-31T23:30:00.000Z', clickedAt: '2026-04-01T10:00:00.000Z' }]);
+    // o período é [de, até): o envio exatamente no início conta; exatamente no fim, não
+    assert.equal((await repos.messages.sentBetween(restaurant.id, '2026-03-31T23:30:00.000Z', '2026-04-01T00:00:00.000Z')).length, 1);
+    assert.equal((await repos.messages.sentBetween(restaurant.id, '2026-03-01T00:00:00.000Z', '2026-03-31T23:30:00.000Z')).length, 0);
     assert.deepEqual(await repos.messages.timelineSince({ restaurantId: restaurant.id, since: '2026-04-01T00:00:00.000Z' }), [{ sentAt: '2026-03-31T23:30:00.000Z', readAt: null, clickedAt: '2026-04-01T10:00:00.000Z' }]);
   });
 
@@ -196,6 +201,21 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
     assert.equal((await repos.conversions.attributedBetween(restaurant.id, at(-60000), at(60000))).length, 2);
   });
 
+  it('pedidos: o período é [de, até), incluindo o início e excluindo o fim', async () => {
+    const { restaurant } = await fresh();
+    const c = await repos.campaigns.create({ restaurantId: restaurant.id, name: 'Período', status: 'completed' });
+    const from = '2026-05-01T00:00:00.000Z';
+    const to = '2026-06-01T00:00:00.000Z';
+    const order = (orderId, createdAt, value) => repos.conversions.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId, value, createdAt });
+    await order('B-1', '2026-04-30T23:59:59.999Z', 99); // um instante antes do período
+    await order('B-2', from, 10.1); // exatamente no início: conta
+    await order('B-3', '2026-05-15T12:00:00.000Z', 20.2);
+    await order('B-4', to, 5); // exatamente no fim: não conta
+    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id, from, to }), { orders: 2, revenue: 30.3 });
+    assert.deepEqual((await repos.conversions.attributedBetween(restaurant.id, from, to)).map((x) => x.orderId), ['B-2', 'B-3']);
+    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id }), { orders: 4, revenue: 134.3 });
+  });
+
   it('excluir campanha apaga mensagens e pedidos; excluir contato mantém a mensagem', async () => {
     const { restaurant, contacts } = await fresh();
     const c = await repos.campaigns.create({ restaurantId: restaurant.id, name: 'Apagar', status: 'completed' });
@@ -217,6 +237,34 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
     assert.deepEqual(await repos.campaigns.list({ restaurantId: restaurant.id }), []);
   });
 
+  it('mensagens: id que não é UUID devolve vazio em vez de erro do banco', async () => {
+    assert.equal(await repos.messages.claimNext('xyz'), null);
+    assert.equal(await repos.messages.hasQueued('xyz'), false);
+    assert.deepEqual(await repos.messages.skipQueued('xyz', 'Campanha cancelada'), []);
+    assert.equal(await repos.messages.markSent('xyz', { provider: 'simulator', providerMessageId: 'p', sentAt: at() }), null);
+    assert.equal(await repos.messages.registerClick('xyz', at()), null);
+    assert.equal(await repos.messages.registerReply('xyz', { reply: 'SAIR', optOut: true, at: at() }), null);
+    assert.equal(await repos.messages.markConverted('xyz', at()), null);
+  });
+
+  it('empates na data saem sempre na mesma ordem', async () => {
+    const { restaurant, contacts } = await fresh();
+    const c = await repos.campaigns.create({ restaurantId: restaurant.id, name: 'Empates', status: 'completed' });
+    // duas mensagens para o mesmo telefone, enviadas no mesmo instante
+    const [first, second] = await queue(c, [contacts[0], contacts[0]]);
+    const sentAt = at(-1000);
+    await repos.messages.markSent(first.id, { provider: 's', providerMessageId: `${c.id}-e1`, sentAt });
+    await repos.messages.markSent(second.id, { provider: 's', providerMessageId: `${c.id}-e2`, sentAt });
+    assert.equal((await repos.messages.lastSentToPhoneKey(MessagingProvider.phoneKey(contacts[0].phone))).id, first.id, 'vale a primeira inserida, como no JSON antigo');
+
+    // dois pedidos no mesmo instante, inseridos na ordem contrária à dos ids
+    const ids = ['10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000001'];
+    const createdAt = at(-2000);
+    for (const [i, id] of ids.entries()) await repos.conversions.createUnique({ id, restaurantId: restaurant.id, campaignId: c.id, orderId: `E-${i}`, value: 1, createdAt });
+    assert.deepEqual((await repos.conversions.recentAttributed({ restaurantId: restaurant.id, limit: 2 })).map((x) => x.id), [ids[1], ids[0]]);
+  });
+
+  // apaga o banco deste arquivo: precisa ser o último teste
   it('reset apaga todos os dados e volta as configurações ao padrão', async () => {
     await repos.settings.load();
     await repos.settings.update({ footer: 'Outro rodapé' });
