@@ -85,11 +85,12 @@ class PgDriver {
       await pool.end().catch(() => {});
       throw new Error(`Não foi possível conectar ao PostgreSQL (${maskUrl(url)}): ${err.message}`);
     }
-    return new PgDriver(pool);
+    return new PgDriver(pool, logger);
   }
 
-  constructor(pool) {
+  constructor(pool, logger) {
     this.pool = pool;
+    this.logger = logger;
     this.kind = 'pg';
   }
 
@@ -103,6 +104,15 @@ class PgDriver {
 
   async tx(fn) {
     const client = await this.pool.connect();
+    // Enquanto o cliente está emprestado, o pool não vigia o 'error' dele. Sem este listener, uma conexão que cai
+    // no meio da transação vira exceção não tratada e derruba o servidor. A consulta em andamento já rejeita, então
+    // a transação falha e desfaz; aqui só registramos a queda e marcamos o cliente como quebrado.
+    let broken = null;
+    const onError = (err) => {
+      broken = err;
+      this.logger.error(`[db] Conexão com o PostgreSQL caiu durante uma transação: ${err.message}`);
+    };
+    client.on('error', onError);
     try {
       await client.query('BEGIN');
       const result = await fn(new PgTxDriver(client));
@@ -112,7 +122,9 @@ class PgDriver {
       await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
-      client.release();
+      client.removeListener('error', onError);
+      // Com o erro, o pool descarta o cliente em vez de devolver uma conexão morta; no próximo uso ele reconecta
+      client.release(broken || undefined);
     }
   }
 

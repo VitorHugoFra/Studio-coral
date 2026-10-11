@@ -201,4 +201,32 @@ describe('resiliência do driver pg', () => {
       await pg.close();
     }
   });
+
+  it('conexão que cai no meio de uma transação não derruba o servidor: a tx rejeita, avisa no log e o pool reconecta', async () => {
+    const pg = await startPgServer();
+    const errors = [];
+    let db;
+    try {
+      db = await Database.open({
+        databaseUrl: pg.url,
+        databasePoolMax: 1,
+        logger: { error: (...args) => errors.push(args.join(' ')) },
+      });
+
+      // Derruba o socket da conexão emprestada à transação (t.driver é o PgTxDriver; client, o cliente do pg).
+      // Se ninguém escutar o 'error' desse cliente, a queda vira exceção não tratada e o runner reprova o teste.
+      // A mensagem é conferida para que um erro qualquer dentro da função (um caminho de internos errado) não passe por queda.
+      await assert.rejects(db.tx(async (t) => {
+        await t.query('SELECT 1');
+        t.driver.client.connection.stream.destroy();
+        await t.query('SELECT 2');
+      }), /Connection terminated|not queryable/);
+
+      assert.ok(errors.some((msg) => msg.includes('durante uma transação')), `esperava o aviso no log, veio: ${JSON.stringify(errors)}`);
+      assert.equal((await db.one('SELECT 3 AS n')).n, 3);
+    } finally {
+      await db?.close();
+      await pg.close();
+    }
+  });
 });
