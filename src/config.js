@@ -5,11 +5,18 @@ const env = (key, fallback) => (process.env[key] !== undefined && process.env[ke
 const bool = (key, fallback) => String(env(key, fallback)).toLowerCase() === 'true';
 
 const port = Number(env('PORT', 3000));
+const dataDir = path.resolve(env('DATA_DIR', path.join(__dirname, '..', 'data')));
 
 module.exports = {
   port,
   publicUrl: env('PUBLIC_URL', `http://localhost:${port}`).replace(/\/$/, ''),
-  dataDir: path.join(__dirname, '..', 'data'),
+  dataDir,
+
+  // Banco de dados: com DATABASE_URL usa o PostgreSQL informado; sem ela, o
+  // PGlite (PostgreSQL embutido) guarda tudo em data/pgdata.
+  databaseUrl: env('DATABASE_URL', ''),
+  databasePoolMax: Number(env('DATABASE_POOL_MAX', 10)),
+  pgliteDir: path.join(dataDir, 'pgdata'),
 
   admin: {
     name: env('ADMIN_NAME', 'Equipe Studio Coral'),
@@ -27,7 +34,7 @@ module.exports = {
       session: env('WPP_SESSION', 'studio-coral'),
       headless: bool('WPP_HEADLESS', 'true'),
       simulateTyping: bool('WPP_SIMULATE_TYPING', 'true'),
-      tokensDir: path.join(__dirname, '..', 'data', 'wpp-tokens'),
+      tokensDir: path.join(dataDir, 'wpp-tokens'),
     },
     whatsappCloud: {
       token: env('WA_CLOUD_TOKEN', ''),
