@@ -18,6 +18,9 @@ module.exports = {
   },
   sessionSecret: env('SESSION_SECRET', 'studio-coral-dev-secret'),
 
+  // Intervalo entre envios no simulador, em segundos (os testes usam zero)
+  simulatorPace: { min: 0.8, max: 2.2 },
+
   messaging: {
     provider: env('MESSAGING_PROVIDER', 'simulator'),
     wppconnect: {

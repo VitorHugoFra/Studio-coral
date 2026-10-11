@@ -17,12 +17,12 @@ const { PdfService } = require('./services/PdfService');
  * Composição da aplicação (composition root).
  * Aqui — e somente aqui — as implementações concretas são ligadas aos contratos.
  */
-function buildContainer(overrides = {}) {
+function buildContainer({ config: cfg = config, overrides = {} } = {}) {
   const c = new Container();
 
-  c.value('config', config);
+  c.value('config', cfg);
   c.value('logger', console);
-  c.register('store', () => new JsonStore(path.join(config.dataDir, 'db.json')));
+  c.register('store', (x) => new JsonStore(path.join(x.resolve('config').dataDir, 'db.json')));
   c.register('repos', (x) => createRepositories(x.resolve('store')));
   c.register('events', () => new EventBus());
   c.register('auth', (x) => new AuthService({ config: x.resolve('config'), repos: x.resolve('repos') }));

@@ -46,9 +46,17 @@ class DispatchService {
     for (const m of this.repos.messages.filter((x) => x.status === 'sending')) {
       this.repos.messages.update(m, { status: 'queued' });
     }
-    setInterval(() => this.checkSchedules(), 15000).unref();
+    this.scheduleTimer = setInterval(() => this.checkSchedules(), 15000).unref();
     this.checkSchedules();
     this.kick();
+  }
+
+  /** Para a fila e os agendamentos (desligamento do servidor e testes). */
+  stop() {
+    this.stopped = true;
+    clearInterval(this.scheduleTimer);
+    clearTimeout(this.timer);
+    this.timer = null;
   }
 
   // ── Público-alvo ───────────────────────────────────────────
@@ -182,7 +190,7 @@ class DispatchService {
   // ── Worker ─────────────────────────────────────────────────
 
   kick(delay = 50) {
-    if (this.busy) return;
+    if (this.busy || this.stopped) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.tick(), delay);
   }
@@ -199,7 +207,7 @@ class DispatchService {
     } finally {
       this.busy = false;
     }
-    if (next !== null) this.timer = setTimeout(() => this.tick(), next);
+    if (next !== null && !this.stopped) this.timer = setTimeout(() => this.tick(), next);
   }
 
   setWaiting(campaigns, reason) {
@@ -254,8 +262,9 @@ class DispatchService {
 
     if (!sent) return 300; // ignorada/falhou sem tocar no WhatsApp: segue rápido
     const simulator = this.messaging.key === 'simulator';
-    const min = simulator ? 0.8 : settings.minDelaySeconds;
-    const max = simulator ? 2.2 : Math.max(settings.maxDelaySeconds, settings.minDelaySeconds);
+    const pace = this.config.simulatorPace || { min: 0.8, max: 2.2 };
+    const min = simulator ? pace.min : settings.minDelaySeconds;
+    const max = simulator ? pace.max : Math.max(settings.maxDelaySeconds, settings.minDelaySeconds);
     return Math.round((min + Math.random() * (max - min)) * 1000);
   }
 

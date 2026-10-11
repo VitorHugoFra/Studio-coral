@@ -16,11 +16,13 @@ class SimulatorProvider extends MessagingProvider {
   static description = 'Nada é enviado de verdade. Ideal para apresentar a plataforma a restaurantes.';
   static capabilities = { qrLogin: false, templates: false, media: true, typing: false, outbox: true };
 
-  constructor({ failRate = 0.03, deliveryRate = 0.96, readRate = 0.72 } = {}) {
+  constructor({ failRate = 0.03, deliveryRate = 0.96, readRate = 0.72, timing = {} } = {}) {
     super();
     this.failRate = failRate;
     this.deliveryRate = deliveryRate;
     this.readRate = readRate;
+    // Tempos (ms) da demonstração; os testes usam valores mínimos
+    this.timing = { start: 600, send: [120, 400], deliver: [700, 3000], read: [2500, 15000], ...timing };
     this.outbox = [];
     this.timers = new Set();
   }
@@ -28,7 +30,7 @@ class SimulatorProvider extends MessagingProvider {
   async start() {
     if (this.state.state === 'connected') return;
     this.setState('starting');
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, this.timing.start));
     this.setState('connected', { me: { name: 'Studio Coral · Simulador', number: '55 31 90000-0000' } });
   }
 
@@ -48,7 +50,7 @@ class SimulatorProvider extends MessagingProvider {
     const number = MessagingProvider.normalizePhone(to);
     if (number.length < 12) throw new MessagingError('Número inválido', 'invalid_number');
 
-    await new Promise((r) => setTimeout(r, rand(120, 400)));
+    await new Promise((r) => setTimeout(r, rand(...this.timing.send)));
     if (Math.random() < this.failRate) throw new MessagingError('Número não possui WhatsApp', 'not_on_whatsapp');
 
     const providerMessageId = `sim_${crypto.randomUUID()}`;
@@ -65,9 +67,9 @@ class SimulatorProvider extends MessagingProvider {
           this.later(() => {
             item.status = 'read';
             this.emit('ack', { providerMessageId, status: 'read' });
-          }, rand(2500, 15000));
+          }, rand(...this.timing.read));
         }
-      }, rand(700, 3000));
+      }, rand(...this.timing.deliver));
     }
 
     return { providerMessageId, to: number };
