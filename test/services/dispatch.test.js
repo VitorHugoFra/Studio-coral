@@ -1,8 +1,9 @@
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 const { openTestDb } = require('../helpers/db');
 const { waitFor } = require('../helpers/app');
+const { interleave } = require('../helpers/race');
 const { createRepositories } = require('../../src/db/repositories/index');
 const { DispatchService } = require('../../src/services/DispatchService');
 const { TemplateService } = require('../../src/services/TemplateService');
@@ -27,6 +28,19 @@ class FakeMessaging extends EventEmitter {
   }
 }
 
+/** Serviço da fila ligado ao banco e a um canal falso. */
+function newDispatch(repos, messaging) {
+  return new DispatchService({
+    repos,
+    messaging,
+    templates: new TemplateService({ settings: repos.settings }),
+    media: { resolve: () => undefined },
+    events: { publish() {} },
+    config: { publicUrl: 'http://teste.local', simulatorPace: { min: 0, max: 0 } },
+    logger: { log() {}, error() {}, warn() {} },
+  });
+}
+
 describe('fila de disparo sobre o banco', () => {
   let db;
   let repos;
@@ -40,15 +54,7 @@ describe('fila de disparo sobre o banco', () => {
     repos = createRepositories(db);
     await repos.settings.load();
     messaging = new FakeMessaging();
-    dispatch = new DispatchService({
-      repos,
-      messaging,
-      templates: new TemplateService({ settings: repos.settings }),
-      media: { resolve: () => undefined },
-      events: { publish() {} },
-      config: { publicUrl: 'http://teste.local', simulatorPace: { min: 0, max: 0 } },
-      logger: { log() {}, error() {}, warn() {} },
-    });
+    dispatch = newDispatch(repos, messaging);
     restaurant = await repos.restaurants.create({ name: 'Fila', slug: 'fila', requireApproval: false });
     await repos.contacts.insertMany([1, 2, 3].map((i) => ({ restaurantId: restaurant.id, name: `Pessoa ${i}`, phone: `553197000000${i}`, optIn: true })));
   });
@@ -101,5 +107,102 @@ describe('fila de disparo sobre o banco', () => {
     await repos.campaigns.update(c.id, { status: 'paused' });
     await dispatch.complete(stale);
     assert.equal(await statusOf(c.id), 'paused');
+  });
+});
+
+describe('fila de disparo: pedidos que chegam no meio de outro', () => {
+  let db;
+  let repos;
+  let restaurant;
+  let worker;
+  let created;
+  const statusOf = async (id) => (await repos.campaigns.get(id)).status;
+  const newCampaign = async (data) => {
+    const c = await repos.campaigns.create({ restaurantId: restaurant.id, message: 'Oi', ...data });
+    created.push(c.id);
+    return c;
+  };
+  const concluded = (id) => waitFor(async () => (await statusOf(id)) === 'completed', { timeout: 5000, message: 'campanha concluída' });
+  const audienceSize = async () => (await repos.contacts.audience(restaurant.id)).length;
+
+  before(async () => {
+    db = await openTestDb();
+    repos = createRepositories(db);
+    await repos.settings.load();
+    restaurant = await repos.restaurants.create({ name: 'Concorrência', slug: 'concorrencia', requireApproval: false });
+    await repos.contacts.insertMany([1, 2].map((i) => ({ restaurantId: restaurant.id, name: `Cliente ${i}`, phone: `553198000000${i}`, optIn: true })));
+  });
+  beforeEach(() => {
+    created = [];
+    worker = newDispatch(repos, new FakeMessaging());
+  });
+  afterEach(async () => {
+    worker.stop();
+    await worker.idle();
+    // Interceptações que sobraram saem, e as campanhas do teste também (as mensagens vão junto)
+    for (const [repo, method] of [[repos.campaigns, 'get'], [repos.campaigns, 'byStatus'], [repos.restaurants, 'get']]) delete repo[method];
+    for (const id of created) await repos.campaigns.remove(id);
+  });
+  after(async () => { await db.close(); });
+
+  it('um disparo pedido com o passo da fila ocupado não se perde', async () => {
+    const c = await newCampaign({ name: 'Despertar' });
+    let release;
+    let parked = false;
+    const gate = new Promise((r) => { release = r; });
+    // O passo lê a fila (ainda vazia) e fica parado antes de seguir
+    interleave(repos.campaigns, 'byStatus', async () => { parked = true; await gate; });
+    try {
+      worker.kick();
+      await waitFor(() => parked, { message: 'passo parado na leitura da fila' });
+      await worker.start(c.id); // o pedido chega com o passo ocupado
+      release();
+      await concluded(c.id);
+      assert.equal((await repos.messages.byCampaign(c.id)).length, await audienceSize());
+    } finally {
+      release();
+    }
+  });
+
+  it('agendar no meio do disparo recusa o pedido e não duplica a fila', async () => {
+    const c = await newCampaign({ name: 'Agenda e dispara' });
+    // O schedule já conferiu o status quando outro pedido inicia a campanha
+    interleave(repos.restaurants, 'get', () => worker.start(c.id));
+    await assert.rejects(worker.schedule(c.id, new Date(Date.now() + 3600e3).toISOString()), { message: 'Esta campanha já foi iniciada.' });
+    await concluded(c.id);
+    assert.equal((await repos.messages.byCampaign(c.id)).length, await audienceSize());
+  });
+
+  it('pausar no instante em que a campanha conclui recusa o pedido e mantém a conclusão', async () => {
+    const c = await newCampaign({ name: 'Pausa tardia', status: 'sending', startedAt: new Date().toISOString() });
+    // A leitura ainda vê "enviando"; logo depois a fila conclui a campanha
+    interleave(repos.campaigns, 'get', () => repos.campaigns.update(c.id, { status: 'completed', completedAt: new Date().toISOString() }));
+    await assert.rejects(worker.pause(c.id), { message: 'Só é possível pausar campanhas em andamento.' });
+    assert.equal(await statusOf(c.id), 'completed');
+  });
+
+  it('retomar uma campanha cancelada no meio do pedido recusa e não a ressuscita', async () => {
+    const c = await newCampaign({ name: 'Retoma tardia', status: 'paused', startedAt: new Date().toISOString() });
+    interleave(repos.campaigns, 'get', () => repos.campaigns.update(c.id, { status: 'canceled', completedAt: new Date().toISOString() }));
+    await assert.rejects(worker.resume(c.id), { message: 'A campanha não está pausada.' });
+    assert.equal(await statusOf(c.id), 'canceled');
+  });
+
+  it('cancelar no instante em que a campanha conclui recusa o pedido e não mexe na fila', async () => {
+    const c = await newCampaign({ name: 'Cancela tardio', status: 'sending', startedAt: new Date().toISOString() });
+    const [contact] = await repos.contacts.byRestaurant(restaurant.id);
+    const [m] = await repos.messages.insertMany([{ campaignId: c.id, restaurantId: restaurant.id, contactId: contact.id, name: contact.name, phone: contact.phone, code: 'cancelatardio1', status: 'queued' }]);
+    interleave(repos.campaigns, 'get', () => repos.campaigns.update(c.id, { status: 'completed', completedAt: new Date().toISOString() }));
+    await assert.rejects(worker.cancel(c.id), { message: 'A campanha já foi encerrada.' });
+    assert.equal(await statusOf(c.id), 'completed');
+    assert.equal((await repos.messages.get(m.id)).status, 'queued');
+  });
+
+  it('cancelar um agendamento no meio do início do disparo recusa o pedido e não duplica a fila', async () => {
+    const c = await newCampaign({ name: 'Cancela agenda', status: 'scheduled', scheduledAt: new Date(Date.now() + 3600e3).toISOString() });
+    interleave(repos.campaigns, 'get', () => worker.start(c.id));
+    await assert.rejects(worker.cancel(c.id), { message: 'A campanha já foi encerrada.' });
+    await concluded(c.id);
+    assert.equal((await repos.messages.byCampaign(c.id)).length, await audienceSize());
   });
 });

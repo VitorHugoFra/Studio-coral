@@ -30,6 +30,7 @@ class DispatchService {
     this.logger = logger;
     this.timer = null;
     this.busy = false;
+    this.rekick = false;
     this.stopped = false;
     this.checking = false;
     this.pending = new Set();
@@ -146,7 +147,10 @@ class DispatchService {
     this.assertApproved(campaign, await this.repos.restaurants.get(campaign.restaurantId));
     const date = new Date(when);
     if (Number.isNaN(date.getTime()) || date.getTime() < Date.now() - 60000) throw new Error('Escolha uma data futura.');
-    await this.repos.campaigns.update(campaign, { status: 'scheduled', scheduledAt: date.toISOString() });
+    // Mudanças de status são condicionais: se outro pedido já mexeu na campanha (ex.: o disparo começou), este perde
+    if (!(await this.repos.campaigns.transition(campaign, ['draft', 'scheduled'], { status: 'scheduled', scheduledAt: date.toISOString() }))) {
+      throw new Error('Esta campanha já foi iniciada.');
+    }
     this.publishProgress(campaign);
     return campaign;
   }
@@ -154,7 +158,7 @@ class DispatchService {
   async pause(campaignId) {
     const c = await this.mustGet(campaignId);
     if (c.status !== 'sending') throw new Error('Só é possível pausar campanhas em andamento.');
-    await this.repos.campaigns.update(c, { status: 'paused' });
+    if (!(await this.repos.campaigns.transition(c, ['sending'], { status: 'paused' }))) throw new Error('Só é possível pausar campanhas em andamento.');
     this.publishProgress(c);
     return c;
   }
@@ -162,7 +166,7 @@ class DispatchService {
   async resume(campaignId) {
     const c = await this.mustGet(campaignId);
     if (c.status !== 'paused') throw new Error('A campanha não está pausada.');
-    await this.repos.campaigns.update(c, { status: 'sending' });
+    if (!(await this.repos.campaigns.transition(c, ['paused'], { status: 'sending' }))) throw new Error('A campanha não está pausada.');
     this.publishProgress(c);
     this.kick();
     return c;
@@ -172,10 +176,11 @@ class DispatchService {
     const c = await this.mustGet(campaignId);
     if (['completed', 'canceled'].includes(c.status)) throw new Error('A campanha já foi encerrada.');
     if (c.status === 'scheduled' || c.status === 'draft') {
-      await this.repos.campaigns.update(c, { status: 'draft', scheduledAt: null });
+      if (!(await this.repos.campaigns.transition(c, ['draft', 'scheduled'], { status: 'draft', scheduledAt: null }))) throw new Error('A campanha já foi encerrada.');
     } else {
+      // O status muda primeiro: se a campanha acabou de concluir, o pedido é recusado sem mexer na fila
+      if (!(await this.repos.campaigns.transition(c, ['sending', 'paused'], { status: 'canceled', completedAt: new Date().toISOString() }))) throw new Error('A campanha já foi encerrada.');
       await this.repos.messages.skipQueued(c.id, 'Campanha cancelada');
-      await this.repos.campaigns.update(c, { status: 'canceled', completedAt: new Date().toISOString() });
     }
     this.publishProgress(c);
     return c;
@@ -209,7 +214,9 @@ class DispatchService {
   // ── Worker ─────────────────────────────────────────────────
 
   kick(delay = 50) {
-    if (this.busy || this.stopped) return;
+    if (this.stopped) return;
+    // Pedido durante um passo em andamento: o passo roda de novo ao terminar (não se perde)
+    if (this.busy) { this.rekick = true; return; }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.tick(), delay);
   }
@@ -218,6 +225,7 @@ class DispatchService {
     this.timer = null;
     if (this.stopped) return;
     this.busy = true;
+    this.rekick = false;
     let next = null;
     try {
       next = await this.step();
@@ -227,6 +235,8 @@ class DispatchService {
     } finally {
       this.busy = false;
     }
+    if (this.rekick && next === null) next = 50;
+    this.rekick = false;
     if (next !== null && !this.stopped) this.timer = setTimeout(() => this.tick(), next);
   }
 

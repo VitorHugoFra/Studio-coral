@@ -35,9 +35,19 @@ function createApi(container) {
   const media = container.resolve('media');
   const reports = container.resolve('reports');
   const pdf = container.resolve('pdf');
+  const logger = container.resolve('logger');
 
   const router = express.Router();
-  const wrap = (fn) => (req, res) => Promise.resolve().then(() => fn(req, res)).catch((err) => res.status(err.status || 400).json({ error: err.message }));
+  // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos
+  const isDbError = (err) => typeof err.code === 'string' && /^[0-9A-Z]{5}$/.test(err.code);
+  const wrap = (fn) => (req, res) => Promise.resolve().then(() => fn(req, res)).catch((err) => {
+    // Falha do banco não mapeada: registra e responde 500 sem expor detalhes
+    if (!err.status && isDbError(err)) {
+      logger.error('[api]', err);
+      return res.status(500).json({ error: 'Erro interno. Tente de novo em instantes.' });
+    }
+    return res.status(err.status || 400).json({ error: err.message });
+  });
 
   // ── Autenticação ───────────────────────────────────────────
   router.post('/auth/login', wrap(async (req, res) => {
@@ -331,7 +341,10 @@ function createApi(container) {
       data.approvalLog = [...(c.approvalLog || []), { action: 'reset', by: req.user.name, at: new Date().toISOString(), note: 'Conteúdo alterado pela agência' }];
       if (c.status === 'scheduled') { data.status = 'draft'; data.scheduledAt = null; }
     }
-    res.json(await campaignView(await repos.campaigns.update(c, data)));
+    // Só edita se ainda for rascunho ou agendada: um disparo que começou no meio do caminho vale
+    const updated = await repos.campaigns.transition(c, ['draft', 'scheduled'], data);
+    if (!updated) throw new Error('Campanhas já disparadas não podem ser editadas. Duplique-a.');
+    res.json(await campaignView(updated));
   }));
 
   router.delete('/campaigns/:id', wrap(async (req, res) => {
