@@ -4,6 +4,7 @@ const express = require('express');
 const defaultConfig = require('./config');
 const { Database } = require('./db/Database');
 const { migrate } = require('./db/migrate');
+const { importJson, shortSummary } = require('./db/importJson');
 const { buildContainer } = require('./bootstrap');
 const { createApi } = require('./http/api');
 const { createPublicRoutes } = require('./http/public');
@@ -21,10 +22,18 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
     await migrate(db, { logger });
     const container = buildContainer({ config, db, logger, overrides });
     const repos = container.resolve('repos');
-    // Primeira execução: popula dados de demonstração
+    // Primeira execução (banco vazio): traz o antigo data/db.json, se existir;
+    // senão, cria os dados de demonstração
     if (seed && (await repos.restaurants.count()) === 0) {
-      await seedDemo(repos);
-      logger.log('🌱 Dados de demonstração criados.');
+      const legacy = path.join(config.dataDir, 'db.json');
+      if (fs.existsSync(legacy)) {
+        const report = await importJson(db, JSON.parse(fs.readFileSync(legacy, 'utf8') || '{}'));
+        logger.log(`📦 data/db.json importado para o banco: ${shortSummary(report)}. O arquivo foi mantido como cópia.`);
+        report.warnings.forEach((w) => logger.log(`   ⚠ ${w}`));
+      } else {
+        await seedDemo(repos);
+        logger.log('🌱 Dados de demonstração criados.');
+      }
     }
     await repos.settings.load();
 

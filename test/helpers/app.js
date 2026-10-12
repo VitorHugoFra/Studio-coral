@@ -68,8 +68,9 @@ const phone = (i) => `5531999${String(i).padStart(6, '0')}`;
  * Sobe o app numa porta livre, com pasta de dados temporária e simulador rápido.
  * Devolve o cliente da agência já logado e um close() que desliga e apaga tudo.
  */
-async function startApp({ seed = false, simulator = FAST_SIMULATOR } = {}) {
+async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
+  if (legacyJson) fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify(legacyJson));
   const config = {
     ...baseConfig,
     port: 0,
