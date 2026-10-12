@@ -58,6 +58,20 @@ function databaseSuite(name, open) {
       await assert.rejects(db.query('INSERT INTO t (id, v) VALUES (1, $1)', ['x']), (err) => err.code === '23505');
     });
 
+    it('erros do banco saem marcados (err.db) em query, exec e transação, sem perder code e constraint', async () => {
+      await db.exec('CREATE TABLE marcados (id int PRIMARY KEY); INSERT INTO marcados VALUES (1);');
+      const bad = 'INSERT INTO marcados VALUES (1)'; // chave repetida
+      const byQuery = await db.query(bad).catch((err) => err);
+      assert.equal(byQuery.db, true);
+      assert.equal(byQuery.code, '23505');
+      assert.equal(byQuery.constraint, 'marcados_pkey');
+      assert.equal((await db.exec('SELECT * FROM tabela_que_nao_existe').catch((err) => err)).db, true);
+      assert.equal((await db.many('SELECT * FROM tabela_que_nao_existe').catch((err) => err)).db, true);
+      assert.equal((await db.tx((t) => t.query(bad)).catch((err) => err)).db, true);
+      // erro do próprio código, lançado dentro da transação, não é falha do banco
+      assert.equal((await db.tx(async () => { throw new Error('meu erro'); }).catch((err) => err)).db, undefined);
+    });
+
     it('tipos: timestamptz vira Date e numeric vira texto (o mapeamento converte)', async () => {
       const row = await db.one("INSERT INTO t (id, v, n) VALUES (10, 'x', 12.5) RETURNING *");
       assert.ok(row.at instanceof Date);

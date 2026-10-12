@@ -198,11 +198,33 @@ describe('fila de disparo: pedidos que chegam no meio de outro', () => {
     assert.equal((await repos.messages.get(m.id)).status, 'queued');
   });
 
-  it('cancelar um agendamento no meio do início do disparo recusa o pedido e não duplica a fila', async () => {
+  it('cancelar um agendamento no meio do início do disparo cancela o envio que começou, sem duplicar a fila', async () => {
     const c = await newCampaign({ name: 'Cancela agenda', status: 'scheduled', scheduledAt: new Date(Date.now() + 3600e3).toISOString() });
-    interleave(repos.campaigns, 'get', () => worker.start(c.id));
-    await assert.rejects(worker.cancel(c.id), { message: 'A campanha já foi encerrada.' });
-    await concluded(c.id);
-    assert.equal((await repos.messages.byCampaign(c.id)).length, await audienceSize());
+    // O cancelamento viu "agendada" e, nesse meio tempo, o disparo começou: ele segue para cancelar o envio
+    interleave(repos.campaigns, 'get', async () => { await worker.start(c.id); worker.stop(); });
+    await worker.cancel(c.id);
+    assert.equal(await statusOf(c.id), 'canceled');
+    const messages = await repos.messages.byCampaign(c.id);
+    assert.equal(messages.length, await audienceSize());
+    assert.ok(messages.every((m) => m.status === 'skipped'), 'o que estava na fila foi descartado');
+  });
+
+  it('cancelar é uma operação só: se descartar a fila falhar, o status não muda', async () => {
+    const c = await newCampaign({ name: 'Cancela atômico', status: 'sending', startedAt: new Date().toISOString() });
+    const [contact] = await repos.contacts.byRestaurant(restaurant.id);
+    const [m] = await repos.messages.insertMany([{ campaignId: c.id, restaurantId: restaurant.id, contactId: contact.id, name: contact.name, phone: contact.phone, code: 'atomico1', status: 'queued' }]);
+    // O segundo passo do cancelamento (descartar a fila) falha dentro da transação
+    const { tx } = repos;
+    repos.tx = (fn) => tx.call(repos, (r) => {
+      r.messages.skipQueued = async () => { throw new Error('falha ao descartar a fila'); };
+      return fn(r);
+    });
+    try {
+      await assert.rejects(worker.cancel(c.id), { message: 'falha ao descartar a fila' });
+    } finally {
+      repos.tx = tx;
+    }
+    assert.equal(await statusOf(c.id), 'sending');
+    assert.equal((await repos.messages.get(m.id)).status, 'queued');
   });
 });

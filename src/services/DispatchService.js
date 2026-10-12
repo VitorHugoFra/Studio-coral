@@ -95,6 +95,8 @@ class DispatchService {
 
   async start(campaignId) {
     const campaign = await this.mustGet(campaignId);
+    // A "versão" lida: o disparo só vale se a campanha não mudou (edição, aprovação) até a gravação
+    const seenAt = campaign.updatedAt ?? null;
     if (!['draft', 'scheduled'].includes(campaign.status)) throw new Error('Esta campanha já foi iniciada.');
     if (!campaign.message?.trim()) throw new Error('Escreva a mensagem antes de disparar.');
     const restaurant = await this.repos.restaurants.get(campaign.restaurantId);
@@ -127,8 +129,14 @@ class DispatchService {
             audienceSize: contacts.length,
             provider: this.messaging.key,
             waitingReason: null,
-          });
-          if (!moved) throw new Error('Esta campanha já foi iniciada.');
+          }, { unchangedSince: seenAt });
+          if (!moved) {
+            // Alguém chegou antes: outro disparo (a campanha já saiu de rascunho/agendada) ou uma alteração (edição, aprovação)
+            const current = await r.campaigns.get(campaign.id);
+            if (!current) throw new Error('Campanha não encontrada.');
+            if (!['draft', 'scheduled'].includes(current.status)) throw new Error('Esta campanha já foi iniciada.');
+            throw new Error('A campanha foi alterada enquanto era disparada. Confira e dispare de novo.');
+          }
           await r.messages.insertMany(queue.map((m) => ({ ...m, code: this.newCode() })));
         });
         break;
@@ -175,13 +183,15 @@ class DispatchService {
   async cancel(campaignId) {
     const c = await this.mustGet(campaignId);
     if (['completed', 'canceled'].includes(c.status)) throw new Error('A campanha já foi encerrada.');
-    if (c.status === 'scheduled' || c.status === 'draft') {
-      if (!(await this.repos.campaigns.transition(c, ['draft', 'scheduled'], { status: 'draft', scheduledAt: null }))) throw new Error('A campanha já foi encerrada.');
-    } else {
-      // O status muda primeiro: se a campanha acabou de concluir, o pedido é recusado sem mexer na fila
-      if (!(await this.repos.campaigns.transition(c, ['sending', 'paused'], { status: 'canceled', completedAt: new Date().toISOString() }))) throw new Error('A campanha já foi encerrada.');
-      await this.repos.messages.skipQueued(c.id, 'Campanha cancelada');
-    }
+    // O status e a fila mudam numa transação só (dentro dela, só o `r`)
+    await this.repos.tx(async (r) => {
+      // Rascunho ou agendada que ainda não começou: volta para rascunho
+      if (['draft', 'scheduled'].includes(c.status) && (await r.campaigns.transition(c, ['draft', 'scheduled'], { status: 'draft', scheduledAt: null }))) return;
+      // Em andamento, ou o disparo começou no meio do pedido: cancela o envio. O status muda primeiro (e só se a
+      // campanha ainda estiver em andamento); se ela acabou de concluir, o pedido é recusado sem mexer na fila
+      if (!(await r.campaigns.transition(c, ['sending', 'paused'], { status: 'canceled', completedAt: new Date().toISOString() }))) throw new Error('A campanha já foi encerrada.');
+      await r.messages.skipQueued(c.id, 'Campanha cancelada');
+    });
     this.publishProgress(c);
     return c;
   }

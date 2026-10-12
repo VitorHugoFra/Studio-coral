@@ -28,14 +28,33 @@ class CampaignsRepo extends Repository {
   /**
    * Muda a campanha só se ela ainda estiver num dos status esperados.
    * Evita corridas (dois disparos ao mesmo tempo, conclusão sobre uma pausa).
+   * Com unchangedSince (o updatedAt que o chamador leu; null = nunca alterada), só grava se a
+   * linha também não mudou desde a leitura: decisões tomadas sobre uma versão antiga não valem.
    */
-  async transition(target, from, patch) {
+  async transition(target, from, patch, { unchangedSince } = {}) {
     const id = target && typeof target === 'object' ? target.id : target;
     if (!isUuid(id)) return null;
     const map = this.table.toColumns({ ...patch, updatedAt: new Date().toISOString() });
     const params = [id, from];
     const sets = [...map].map(([col, value]) => `${col} = $${params.push(value)}`);
-    const row = this.map(await this.db.one(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = $1 AND status = ANY($2::text[]) RETURNING *`, params));
+    const unchanged = unchangedSince === undefined ? '' : ` AND updated_at IS NOT DISTINCT FROM $${params.push(unchangedSince)}::timestamptz`;
+    const row = this.map(await this.db.one(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = $1 AND status = ANY($2::text[])${unchanged} RETURNING *`, params));
+    if (row && target && typeof target === 'object') Object.assign(target, row);
+    return row;
+  }
+
+  /**
+   * Grava a aprovação só se a campanha ainda estiver como esperado e acrescenta a entrada ao
+   * histórico no próprio SQL (duas pessoas agindo ao mesmo tempo não apagam o registro uma da outra).
+   * Só vale para campanha ainda não enviada; com pendingOnly, só sobre uma aprovação pendente.
+   */
+  async setApproval(target, { approval, entry, pendingOnly = false }) {
+    const id = target && typeof target === 'object' ? target.id : target;
+    if (!isUuid(id)) return null;
+    const row = this.map(await this.db.one(`
+      UPDATE campaigns SET approval = $2, approval_log = approval_log || $3::jsonb, updated_at = $4
+      WHERE id = $1 AND status IN ('draft', 'scheduled') AND (NOT $5 OR approval->>'status' = 'pending')
+      RETURNING *`, [id, JSON.stringify(approval), JSON.stringify([entry]), new Date().toISOString(), pendingOnly]));
     if (row && target && typeof target === 'object') Object.assign(target, row);
     return row;
   }

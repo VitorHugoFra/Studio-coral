@@ -38,11 +38,12 @@ function createApi(container) {
   const logger = container.resolve('logger');
 
   const router = express.Router();
-  // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos
+  // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos.
+  // Falhas de conexão não trazem SQLSTATE: o Database as marca com err.db
   const isDbError = (err) => typeof err.code === 'string' && /^[0-9A-Z]{5}$/.test(err.code);
   const wrap = (fn) => (req, res) => Promise.resolve().then(() => fn(req, res)).catch((err) => {
     // Falha do banco não mapeada: registra e responde 500 sem expor detalhes
-    if (!err.status && isDbError(err)) {
+    if (!err.status && (err.db || isDbError(err))) {
       logger.error('[api]', err);
       return res.status(500).json({ error: 'Erro interno. Tente de novo em instantes.' });
     }
@@ -333,6 +334,7 @@ function createApi(container) {
     if (!c) throw notFound('Campanha não encontrada');
     if (!['draft', 'scheduled'].includes(c.status)) throw new Error('Campanhas já disparadas não podem ser editadas. Duplique-a.');
     const data = normalizeCampaign(req.body);
+    if (data.restaurantId !== undefined && !(await repos.restaurants.get(data.restaurantId))) throw new Error('Selecione o restaurante.');
     // Mudou o que o cliente final recebe? Então a aprovação do restaurante deixa de valer.
     const CONTENT = ['message', 'mediaUrl', 'coupon', 'destinationUrl', 'segment', 'includeFooter', 'restaurantId'];
     const changed = CONTENT.some((k) => data[k] !== undefined && stable(data[k]) !== stable(c[k]));
@@ -341,9 +343,14 @@ function createApi(container) {
       data.approvalLog = [...(c.approvalLog || []), { action: 'reset', by: req.user.name, at: new Date().toISOString(), note: 'Conteúdo alterado pela agência' }];
       if (c.status === 'scheduled') { data.status = 'draft'; data.scheduledAt = null; }
     }
-    // Só edita se ainda for rascunho ou agendada: um disparo que começou no meio do caminho vale
-    const updated = await repos.campaigns.transition(c, ['draft', 'scheduled'], data);
-    if (!updated) throw new Error('Campanhas já disparadas não podem ser editadas. Duplique-a.');
+    // Só edita a versão que foi lida e ainda não enviada: o disparo ou a alteração de outra pessoa no meio do caminho valem
+    const updated = await repos.campaigns.transition(c, ['draft', 'scheduled'], data, { unchangedSince: c.updatedAt ?? null });
+    if (!updated) {
+      const current = await repos.campaigns.get(c.id);
+      if (!current) throw notFound('Campanha não encontrada');
+      if (!['draft', 'scheduled'].includes(current.status)) throw new Error('Campanhas já disparadas não podem ser editadas. Duplique-a.');
+      throw Object.assign(new Error('A campanha foi alterada por outra pessoa. Recarregue e tente de novo.'), { status: 409 });
+    }
     res.json(await campaignView(updated));
   }));
 
@@ -373,17 +380,19 @@ function createApi(container) {
   }));
 
   // ── Aprovação pelo restaurante ─────────────────────────────
-  const logApproval = (c, entry) => [...(c.approvalLog || []), { ...entry, at: new Date().toISOString() }];
+  // A entrada do histórico vai sozinha: o banco a acrescenta (setApproval), sem reescrever o que outra pessoa gravou
+  const approvalEntry = (entry) => ({ ...entry, at: new Date().toISOString() });
   const publishApproval = (c) => events.publish('approval', { id: c.id, restaurantId: c.restaurantId, name: c.name, approval: c.approval });
 
   router.post('/campaigns/:id/request-approval', wrap(async (req, res) => {
     const c = await ownCampaign(req);
     if (!['draft', 'scheduled'].includes(c.status)) throw new Error('Só campanhas não enviadas vão para aprovação.');
     if (!c.message?.trim()) throw new Error('Escreva a mensagem antes de pedir aprovação.');
-    await repos.campaigns.update(c, {
+    const saved = await repos.campaigns.setApproval(c, {
       approval: { status: 'pending', requestedAt: new Date().toISOString(), requestedBy: req.user.name },
-      approvalLog: logApproval(c, { action: 'requested', by: req.user.name, note: req.body?.note || '' }),
+      entry: approvalEntry({ action: 'requested', by: req.user.name, note: req.body?.note || '' }),
     });
+    if (!saved) throw new Error('Só campanhas não enviadas vão para aprovação.');
     publishApproval(c);
     res.json(await campaignView(c));
   }));
@@ -391,10 +400,12 @@ function createApi(container) {
   router.post('/campaigns/:id/approve', wrap(async (req, res) => {
     const c = await ownCampaign(req);
     if (c.approval?.status !== 'pending') throw new Error('Esta campanha não está aguardando aprovação.');
-    await repos.campaigns.update(c, {
+    const saved = await repos.campaigns.setApproval(c, {
       approval: { ...c.approval, status: 'approved', decidedAt: new Date().toISOString(), decidedBy: req.user.name, note: req.body?.note || '' },
-      approvalLog: logApproval(c, { action: 'approved', by: req.user.name, note: req.body?.note || '' }),
+      entry: approvalEntry({ action: 'approved', by: req.user.name, note: req.body?.note || '' }),
+      pendingOnly: true,
     });
+    if (!saved) throw new Error('Esta campanha não está aguardando aprovação.');
     publishApproval(c);
     res.json(await campaignView(c));
   }));
@@ -404,10 +415,12 @@ function createApi(container) {
     if (c.approval?.status !== 'pending') throw new Error('Esta campanha não está aguardando aprovação.');
     const note = String(req.body?.note || '').trim();
     if (!note) throw new Error('Conte o que precisa mudar.');
-    await repos.campaigns.update(c, {
+    const saved = await repos.campaigns.setApproval(c, {
       approval: { ...c.approval, status: 'changes', decidedAt: new Date().toISOString(), decidedBy: req.user.name, note },
-      approvalLog: logApproval(c, { action: 'changes', by: req.user.name, note }),
+      entry: approvalEntry({ action: 'changes', by: req.user.name, note }),
+      pendingOnly: true,
     });
+    if (!saved) throw new Error('Esta campanha não está aguardando aprovação.');
     publishApproval(c);
     res.json(await campaignView(c));
   }));

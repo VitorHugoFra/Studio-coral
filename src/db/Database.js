@@ -27,8 +27,12 @@ class Database {
     return this.driver.kind;
   }
 
-  query(sql, params = []) {
-    return this.driver.query(sql, params);
+  async query(sql, params = []) {
+    try {
+      return await this.driver.query(sql, params);
+    } catch (err) {
+      throw markAsDbError(err);
+    }
   }
 
   async many(sql, params) {
@@ -40,8 +44,12 @@ class Database {
   }
 
   /** Vários comandos SQL de uma vez, sem parâmetros (migrações). */
-  exec(sql) {
-    return this.driver.exec(sql);
+  async exec(sql) {
+    try {
+      return await this.driver.exec(sql);
+    } catch (err) {
+      throw markAsDbError(err);
+    }
   }
 
   /**
@@ -58,6 +66,16 @@ class Database {
     this.closing ??= this.driver.close();
     return this.closing;
   }
+}
+
+/**
+ * Marca o erro como falha do banco (err.db = true) e devolve o MESMO objeto: code, constraint
+ * e o resto continuam nele. Assim a API responde 500 também às falhas de conexão, que não
+ * trazem SQLSTATE (ECONNREFUSED, "Connection terminated unexpectedly", pool esgotado).
+ */
+function markAsDbError(err) {
+  if (err && typeof err === 'object') err.db = true;
+  return err;
 }
 
 /** Endereço do banco sem a senha, para as mensagens de erro. */
