@@ -66,9 +66,10 @@ const phone = (i) => `5531999${String(i).padStart(6, '0')}`;
 
 /**
  * Sobe o app numa porta livre, com pasta de dados temporária e simulador rápido.
+ * `legacyJson` grava um antigo db.json na pasta de dados; `logger` troca o logger silencioso (para conferir o que a subida registra).
  * Devolve o cliente da agência já logado e um close() que desliga e apaga tudo.
  */
-async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null } = {}) {
+async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null, logger = QUIET } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
   if (legacyJson) fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify(legacyJson));
   const config = {
@@ -92,7 +93,7 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
   };
   let instance = null;
   try {
-    instance = await createApp({ config, overrides, seed, logger: QUIET });
+    instance = await createApp({ config, overrides, seed, logger });
     const server = await instance.listen(0);
     // O objeto config é o mesmo que os serviços receberam: rotas e fila leem publicUrl a cada uso
     // e passam a usar a porta real (o MediaService guarda o valor ao ser criado; nenhum teste depende dele)

@@ -1,3 +1,4 @@
+const fs = require('fs');
 const { createRepositories } = require('./repositories');
 const { table: restaurants } = require('./repositories/restaurants');
 const { table: users } = require('./repositories/users');
@@ -14,10 +15,12 @@ const SKIP_EXISTING = 'ON CONFLICT DO NOTHING';
 
 /**
  * Copia o conteúdo de um antigo data/db.json para o banco, numa transação.
- *  • Pode rodar de novo: o que já existe é ignorado.
+ *  • Pode rodar de novo: o que já existe é ignorado e as configurações que já
+ *    estão no banco (alteradas no sistema novo) não são sobrescritas.
  *  • O JSON não tinha integridade. Pedidos e mensagens com vínculo quebrado
  *    perdem o vínculo; o que não pode existir sem o pai é ignorado; tudo vai
  *    para o relatório.
+ *  • Um erro desfaz tudo e diz em qual coleção aconteceu.
  */
 async function importJson(db, data) {
   const report = { collections: {}, warnings: [] };
@@ -38,9 +41,13 @@ async function importJson(db, data) {
     };
 
     const insert = async (name, rows, stat) => {
-      const inserted = await repos[name].insertMany(rows, { onConflict: SKIP_EXISTING });
-      stat.inserted = inserted.length;
-      stat.existing = rows.length - inserted.length;
+      try {
+        const inserted = await repos[name].insertMany(rows, { onConflict: SKIP_EXISTING });
+        stat.inserted = inserted.length;
+        stat.existing = rows.length - inserted.length; // já estavam no banco ou se repetem no próprio JSON
+      } catch (err) {
+        throw new Error(`Falha ao importar ${name}: ${err.message}`, { cause: err });
+      }
     };
 
     // Restaurantes primeiro; o resto só entra se o restaurante existir
@@ -80,20 +87,34 @@ async function importJson(db, data) {
     });
     await insert('conversions', conversionRows, conversionsPart.stat);
 
-    // Configurações salvas no JSON valem por cima dos padrões
-    if (data?.settings && typeof data.settings === 'object' && Object.keys(data.settings).length) {
-      await repos.settings.update(data.settings);
-      report.settings = Object.keys(data.settings);
+    // Configurações salvas no JSON valem por cima dos padrões, mas só as que o banco ainda não tem:
+    // rodar a importação de novo não desfaz o que foi alterado no sistema novo
+    if (data?.settings && typeof data.settings === 'object') {
+      const current = (await t.one('SELECT data FROM settings WHERE id = 1'))?.data || {};
+      const fresh = Object.fromEntries(Object.entries(data.settings).filter(([key]) => !Object.hasOwn(current, key)));
+      if (Object.keys(fresh).length) {
+        await repos.settings.update(fresh);
+        report.settings = Object.keys(fresh);
+      }
     }
   });
   return report;
+}
+
+/** Lê o antigo db.json; erro com o caminho do arquivo e o que fazer. */
+function readLegacyJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8') || '{}');
+  } catch (err) {
+    throw new Error(`Não foi possível ler ${file}: ${err.message}. Corrija o arquivo ou mova-o para outra pasta (sem ele, o sistema cria os dados de demonstração).`);
+  }
 }
 
 /** Linhas legíveis do relatório (script de importação). */
 function formatReport(report) {
   const lines = Object.entries(report.collections).map(([name, s]) => {
     const extras = [
-      s.existing && `${s.existing} já existiam`,
+      s.existing && `${s.existing} repetidos ou já importados`,
       s.ignored && `${s.ignored} ignorados (referência quebrada)`,
       s.adjusted && `${s.adjusted} com vínculo ajustado`,
     ].filter(Boolean).join(', ');
@@ -108,4 +129,4 @@ function shortSummary(report) {
   return Object.entries(report.collections).map(([name, s]) => `${s.inserted} ${SHORT[name]}`).join(', ');
 }
 
-module.exports = { importJson, formatReport, shortSummary };
+module.exports = { importJson, readLegacyJson, formatReport, shortSummary };

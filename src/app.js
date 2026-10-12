@@ -4,7 +4,7 @@ const express = require('express');
 const defaultConfig = require('./config');
 const { Database } = require('./db/Database');
 const { migrate } = require('./db/migrate');
-const { importJson, shortSummary } = require('./db/importJson');
+const { importJson, readLegacyJson, formatReport, shortSummary } = require('./db/importJson');
 const { buildContainer } = require('./bootstrap');
 const { createApi } = require('./http/api');
 const { createPublicRoutes } = require('./http/public');
@@ -27,9 +27,12 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
     if (seed && (await repos.restaurants.count()) === 0) {
       const legacy = path.join(config.dataDir, 'db.json');
       if (fs.existsSync(legacy)) {
-        const report = await importJson(db, JSON.parse(fs.readFileSync(legacy, 'utf8') || '{}'));
+        const report = await importJson(db, readLegacyJson(legacy));
         logger.log(`📦 data/db.json importado para o banco: ${shortSummary(report)}. O arquivo foi mantido como cópia.`);
-        report.warnings.forEach((w) => logger.log(`   ⚠ ${w}`));
+        // O resumo só conta o que entrou: se algo ficou de fora ou foi ajustado, o relatório completo
+        // (que já traz os avisos) vai para o log; senão, só os avisos
+        if (Object.values(report.collections).some((s) => s.existing || s.ignored || s.adjusted)) formatReport(report).forEach((line) => logger.log(line));
+        else report.warnings.forEach((w) => logger.log(`   ⚠ ${w}`));
       } else {
         await seedDemo(repos);
         logger.log('🌱 Dados de demonstração criados.');

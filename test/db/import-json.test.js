@@ -1,8 +1,11 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { openTestDb } = require('../helpers/db');
 const { legacyJson, ID } = require('../helpers/legacy-json');
-const { importJson, formatReport, shortSummary } = require('../../src/db/importJson');
+const { importJson, formatReport, shortSummary, readLegacyJson } = require('../../src/db/importJson');
 const { createRepositories } = require('../../src/db/repositories');
 const { AuthService } = require('../../src/services/AuthService');
 
@@ -29,7 +32,7 @@ describe('importação do antigo db.json', () => {
     assert.deepEqual(first.warnings, ['contacts: campos desconhecidos ignorados (campoAntigo)']);
     assert.deepEqual(first.settings, ['provider', 'providerEnvBase', 'footer']);
     assert.equal(shortSummary(first), '1 restaurantes, 1 acessos, 2 contatos, 1 campanhas, 2 mensagens, 2 pedidos');
-    assert.ok(formatReport(first).some((line) => line.includes('Contatos') && line.includes('1 já existiam') && line.includes('1 ignorados')));
+    assert.ok(formatReport(first).some((line) => line.includes('Contatos') && line.includes('1 repetidos ou já importados') && line.includes('1 ignorados')));
   });
 
   it('referências quebradas: mensagem perde o contato, pedido perde campanha, mensagem e contato', async () => {
@@ -63,6 +66,51 @@ describe('importação do antigo db.json', () => {
     assert.equal(await repos.messages.count(), 2);
   });
 
+  it('rodar de novo não desfaz configurações alteradas no sistema novo', async () => {
+    await repos.settings.update({ provider: 'simulator' });
+    const again = await importJson(db, legacyJson());
+    assert.equal(again.settings, undefined);
+    await repos.settings.load();
+    assert.equal(repos.settings.get().provider, 'simulator');
+    assert.equal(repos.settings.get().footer, 'Rodapé antigo');
+  });
+
+  it('só entram as configurações que o banco ainda não tem', async () => {
+    const other = await openTestDb();
+    try {
+      const otherRepos = createRepositories(other);
+      await otherRepos.settings.update({ provider: 'simulator' });
+      const report = await importJson(other, legacyJson());
+      assert.deepEqual(report.settings, ['providerEnvBase', 'footer']);
+      await otherRepos.settings.load();
+      assert.equal(otherRepos.settings.get().provider, 'simulator');
+      assert.equal(otherRepos.settings.get().providerEnvBase, 'simulator');
+      assert.equal(otherRepos.settings.get().footer, 'Rodapé antigo');
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('um erro numa coleção desfaz tudo e diz qual coleção falhou', async () => {
+    const other = await openTestDb();
+    try {
+      const broken = {
+        restaurants: [{ id: ID.restaurant, name: 'Cantina Antiga', slug: 'cantina-antiga' }],
+        contacts: [{ id: ID.ana, restaurantId: ID.restaurant, name: 'Ana', phone: '5531999000001', notes: null }],
+      };
+      await assert.rejects(importJson(other, broken), (err) => {
+        assert.match(err.message, /^Falha ao importar contacts: /);
+        assert.ok(err.cause instanceof Error, 'o erro original fica em cause');
+        return true;
+      });
+      const check = createRepositories(other);
+      assert.equal(await check.restaurants.count(), 0);
+      assert.equal(await check.contacts.count(), 0);
+    } finally {
+      await other.close();
+    }
+  });
+
   it('aceita JSON vazio ou incompleto', async () => {
     const other = await openTestDb();
     try {
@@ -72,5 +120,29 @@ describe('importação do antigo db.json', () => {
     } finally {
       await other.close();
     }
+  });
+});
+
+describe('leitura do antigo db.json', () => {
+  let dir;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-json-')); });
+  after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('lê o JSON; arquivo vazio vale como {}', () => {
+    const file = path.join(dir, 'db.json');
+    fs.writeFileSync(file, JSON.stringify({ restaurants: [{ name: 'Cantina' }] }));
+    assert.deepEqual(readLegacyJson(file), { restaurants: [{ name: 'Cantina' }] });
+    fs.writeFileSync(file, '');
+    assert.deepEqual(readLegacyJson(file), {});
+  });
+
+  it('arquivo truncado: o erro traz o caminho e o que fazer', () => {
+    const file = path.join(dir, 'truncado.json');
+    fs.writeFileSync(file, '{ "restaurants": [ { "id": ');
+    assert.throws(() => readLegacyJson(file), (err) => {
+      assert.ok(err.message.includes(file), 'o erro cita o arquivo');
+      assert.match(err.message, /Corrija o arquivo ou mova-o para outra pasta/);
+      return true;
+    });
   });
 });
