@@ -4,6 +4,7 @@ const path = require('path');
 const baseConfig = require('../../src/config');
 const { createApp } = require('../../src/app');
 const { SimulatorProvider } = require('../../src/messaging/providers/SimulatorProvider');
+const { startPgServer } = require('./pg-server');
 
 /** Logger dos testes: só mostra avisos e erros. */
 const QUIET = { log() {}, info() {}, warn: console.warn, error: console.error };
@@ -67,6 +68,7 @@ const phone = (i) => `5531999${String(i).padStart(6, '0')}`;
 /**
  * Sobe o app numa porta livre, com pasta de dados temporária e simulador rápido.
  * `legacyJson` grava um antigo db.json na pasta de dados; `logger` troca o logger silencioso (para conferir o que a subida registra).
+ * O banco é o PGlite em memória; com TEST_PG=1 é um PostgreSQL local (PGlite numa porta TCP) acessado pelo driver `pg`, como em produção.
  * Devolve o cliente da agência já logado e um close() que desliga e apaga tudo.
  */
 async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null, logger = QUIET } = {}) {
@@ -92,7 +94,14 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
     'messaging.factories': () => ({ simulator: () => new SimulatorProvider(simulator) }),
   };
   let instance = null;
+  let pg = null;
   try {
+    // TEST_PG=1: o mesmo teste, mas pelo driver `pg` (como em produção)
+    if (process.env.TEST_PG === '1') {
+      pg = await startPgServer();
+      config.databaseUrl = pg.url;
+      config.databasePoolMax = 1;
+    }
     instance = await createApp({ config, overrides, seed, logger });
     const server = await instance.listen(0);
     // O objeto config é o mesmo que os serviços receberam: rotas e fila leem publicUrl a cada uso
@@ -112,11 +121,13 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
       client: () => createClient(config.publicUrl),
       async close() {
         await instance.close();
+        await pg?.close();
         fs.rmSync(dataDir, { recursive: true, force: true });
       },
     };
   } catch (err) {
     await instance?.close().catch(() => {});
+    await pg?.close().catch(() => {});
     fs.rmSync(dataDir, { recursive: true, force: true });
     throw err;
   }

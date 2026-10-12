@@ -36,12 +36,28 @@ cp .env.example .env
 npm start
 ```
 
-> **Node 18 ou superior** é necessário para o WPPConnect (que usa o Puppeteer/Chrome). Neste computador, o Node 20 portátil está em `C:Usersitor.franca	ools
-ode-v20.20.2-win-x64`; o Node 16 do sistema não foi alterado.
+> **Node 22 ou superior.** O WPPConnect e o relatório em PDF usam o Chrome do Puppeteer, instalado junto com as dependências opcionais (`npm install`).
 
 > **Rede corporativa:** o WPPConnect abre o `web.whatsapp.com` num Chrome interno. Se a rede bloquear esse site (como o Sophos Web Protection da rede atual), a conexão falha e o painel avisa. Use uma rede sem esse bloqueio (casa, 4G) ou peça a liberação do domínio à TI.
 
-`npm run seed` apaga a base (`data/db.json`) e recria os dados de demonstração.
+### Banco de dados
+
+Os dados ficam no PostgreSQL.
+
+- **Sem configurar nada (desenvolvimento):** o sistema usa o **PGlite**, um PostgreSQL embutido, e grava em `data/pgdata`. Não é preciso instalar PostgreSQL.
+- **Produção:** defina `DATABASE_URL=postgres://usuario:senha@host:5432/banco` no `.env`. As tabelas são criadas e atualizadas sozinhas ao subir o servidor (pasta `migrations/`).
+- **Vindo da versão com `data/db.json`:** na primeira subida com o banco vazio, o conteúdo do JSON é importado automaticamente, e o arquivo é mantido como cópia. Para importar à mão: `npm run db:import-json -- caminho/do/db.json`.
+- `npm run seed` apaga o banco e recria os dados de demonstração.
+- Com o PGlite, só um processo usa a pasta por vez: pare o servidor antes de rodar `npm run seed` ou `npm run db:import-json`.
+- **Rode uma instância do servidor por vez**, também em produção: a fila de disparo, a cópia das configurações e os eventos em tempo real ficam na memória do processo.
+
+### Testes
+
+```bash
+npm test
+```
+
+Roda a bateria completa duas vezes: com o PostgreSQL embutido e pelo driver `pg`, como em produção. Não precisa de nada instalado além das dependências do projeto.
 
 ## O fluxo do plano de negócio no sistema
 
@@ -117,4 +133,4 @@ Para adicionar outro canal (Z-API, Twilio, SMS…), crie uma classe que estenda 
 - **Links em produção**: `PUBLIC_URL` precisa ser um endereço público (HTTPS), para que os links abram no celular dos clientes.
 - **Fonte Hemgjord Lettering**: a versão gratuita é só para uso pessoal; para uso comercial é preciso comprar a licença. Coloque o arquivo como `public/fonts/hemgjord-lettering.otf` (ou `.woff2`). Ele fica fora do Git (`.gitignore`) para não ser redistribuído; sem ele, a fonte *Lobster* é usada.
 - **Logo**: extraído do PDF do manual (baixa resolução). Para mais nitidez, substitua `public/brand/coral-wordmark.png` e `coral-snake.png` pelos arquivos originais com fundo transparente. A cor é aplicada via CSS mask.
-- **Banco**: arquivo JSON acessado por repositórios (`src/db`). Para migrar para PostgreSQL, basta trocar essa camada.
+- **Banco**: PostgreSQL acessado por repositórios (`src/db/repositories`); o SQL fica só dentro de `src/db`.

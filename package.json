@@ -9,10 +9,11 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/seed.js --reset",
     "db:import-json": "node scripts/importar-json.js",
-    "test": "node --test --test-concurrency=4 \"test/**/*.test.js\""
+    "test": "node --test --test-concurrency=4 \"test/**/*.test.js\" && npm run test:pg",
+    "test:pg": "node --env-file=test/pg.env --test --test-concurrency=4 \"test/http/**/*.test.js\""
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",
