@@ -58,6 +58,18 @@ describe('importação do antigo db.json', () => {
     assert.equal(repos.settings.get().dailyLimit, 800);
   });
 
+  it('grava a marca legacyImportedAt (data ISO) nas configurações, fora do relatório, e mantém a data da primeira importação', async () => {
+    await repos.settings.load();
+    const mark = repos.settings.get().legacyImportedAt;
+    assert.match(mark, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.ok(Math.abs(Date.now() - Date.parse(mark)) < 5 * 60e3, 'a data é a de agora');
+    assert.ok(!first.settings.includes('legacyImportedAt'), 'a marca não é uma configuração vinda do JSON');
+    await new Promise((r) => { setTimeout(r, 5); });
+    await importJson(db, legacyJson());
+    await repos.settings.load();
+    assert.equal(repos.settings.get().legacyImportedAt, mark, 'importar de novo não muda a data da primeira importação');
+  });
+
   it('rodar de novo não duplica nada', async () => {
     const again = await importJson(db, legacyJson());
     for (const stat of Object.values(again.collections)) assert.equal(stat.inserted, 0);
@@ -106,6 +118,8 @@ describe('importação do antigo db.json', () => {
       const check = createRepositories(other);
       assert.equal(await check.restaurants.count(), 0);
       assert.equal(await check.contacts.count(), 0);
+      // A marca de "já importado" é da mesma transação: sem importação concluída, a próxima subida tenta de novo
+      assert.equal((await other.one('SELECT data FROM settings WHERE id = 1')).data.legacyImportedAt, undefined);
     } finally {
       await other.close();
     }
@@ -117,6 +131,8 @@ describe('importação do antigo db.json', () => {
       const report = await importJson(other, {});
       assert.ok(Object.values(report.collections).every((s) => s.read === 0));
       assert.equal(report.settings, undefined);
+      // Importação concluída (mesmo sem nada para trazer) também deixa a marca
+      assert.match((await other.one('SELECT data FROM settings WHERE id = 1')).data.legacyImportedAt, /^\d{4}-\d{2}-\d{2}T/);
     } finally {
       await other.close();
     }

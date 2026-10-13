@@ -41,12 +41,15 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
     await migrate(db, { logger });
     const container = buildContainer({ config, db, logger, overrides });
     const repos = container.resolve('repos');
-    // Primeira execução (banco vazio): traz o antigo data/db.json, se existir;
-    // senão, cria os dados de demonstração
+    // As configurações vêm antes: a decisão de importar depende da marca legacyImportedAt
+    await repos.settings.load();
+    // Banco vazio: traz o antigo data/db.json, se existir e ainda não tiver sido importado; senão, cria os dados de
+    // demonstração. A marca impede que, com todos os restaurantes excluídos, o JSON volte (com os acessos e senhas antigos)
     if (seed && (await repos.restaurants.count()) === 0) {
       const legacy = path.join(config.dataDir, 'db.json');
-      if (fs.existsSync(legacy)) {
+      if (fs.existsSync(legacy) && !repos.settings.get().legacyImportedAt) {
         const report = await importJson(db, readLegacyJson(legacy));
+        await repos.settings.load(); // as configurações do JSON e a marca entram na cópia em memória
         logger.log(`📦 data/db.json importado para o banco: ${shortSummary(report)}. O arquivo foi mantido como cópia.`);
         // O resumo só conta o que entrou: se algo ficou de fora ou foi ajustado, o relatório completo
         // (que já traz os avisos) vai para o log; senão, só os avisos
@@ -57,7 +60,6 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
         logger.log('🌱 Dados de demonstração criados.');
       }
     }
-    await repos.settings.load();
 
     const app = express();
     app.disable('x-powered-by');

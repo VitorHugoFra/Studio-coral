@@ -8,6 +8,7 @@ const { Database } = require('../../src/db/Database');
 const { createApp } = require('../../src/app');
 const { startApp, waitFor, sleep } = require('../helpers/app');
 const { interleave } = require('../helpers/race');
+const { legacyJson } = require('../helpers/legacy-json');
 
 describe('subida do app', () => {
   it('quando a subida falha, a fila para e o banco é fechado', async () => {
@@ -57,6 +58,56 @@ describe('subida do app', () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].migrated, false, 'a trava vem antes das migrações');
     assert.equal(calls[0].options.logger, logger, 'os avisos da espera vão para o logger da aplicação');
+  });
+
+  it('o db.json antigo entra uma vez só: com todos os restaurantes excluídos, a próxima subida cria a demonstração em vez de reimportar', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
+    const { restaurants, users } = legacyJson();
+    fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ restaurants, users }));
+    // Banco em pasta (e não em memória) para reabri-lo na segunda subida
+    const config = {
+      ...baseConfig,
+      dataDir,
+      databaseUrl: '',
+      pgliteDir: path.join(dataDir, 'pgdata'),
+      messaging: { ...baseConfig.messaging, provider: 'simulator', wppconnect: { ...baseConfig.messaging.wppconnect, tokensDir: path.join(dataDir, 'wpp-tokens') } },
+    };
+    const lines = [];
+    const logger = { log: (...args) => lines.push(args.join(' ')), info() {}, warn() {}, error: console.error };
+    const names = async (instance) => (await instance.container.resolve('repos').restaurants.all()).map((r) => r.name);
+    try {
+      // 1ª subida, banco vazio e db.json presente: importa
+      let marker;
+      let instance = await createApp({ config, seed: true, logger });
+      try {
+        assert.deepEqual(await names(instance), ['Cantina Antiga']);
+        assert.ok(lines.some((l) => l.includes('data/db.json importado')));
+        const repos = instance.container.resolve('repos');
+        marker = repos.settings.get().legacyImportedAt;
+        // Todos os restaurantes são excluídos (os acessos vão junto)
+        for (const r of await repos.restaurants.all()) await repos.restaurants.remove(r.id);
+        assert.equal(await repos.restaurants.count(), 0);
+      } finally {
+        await instance.close();
+      }
+
+      // 2ª subida, banco vazio de novo: o db.json (com os acessos e senhas antigos) NÃO volta
+      lines.length = 0;
+      instance = await createApp({ config, seed: true, logger });
+      try {
+        assert.deepEqual(await names(instance), ['Cantina Bella Nonna', 'Sabor de Minas']);
+        assert.ok(lines.some((l) => l.includes('Dados de demonstração criados')));
+        assert.ok(!lines.some((l) => l.includes('importado')));
+        assert.equal(await instance.container.resolve('repos').users.byEmail('giulia@antiga.com.br'), null, 'o acesso antigo não voltou');
+        // A marca deixada pela importação (data ISO, nas configurações) é o que impede a reimportação
+        assert.match(marker, /^\d{4}-\d{2}-\d{2}T/);
+        assert.equal(instance.container.resolve('repos').settings.get().legacyImportedAt, marker);
+      } finally {
+        await instance.close();
+      }
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it('se outra instância já usa o banco, a subida falha com a mensagem da trava e o banco é fechado', async () => {

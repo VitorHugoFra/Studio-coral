@@ -21,6 +21,8 @@ const SKIP_EXISTING = 'ON CONFLICT DO NOTHING';
  *    perdem o vínculo; o que não pode existir sem o pai é ignorado; tudo vai
  *    para o relatório.
  *  • Um erro desfaz tudo e diz em qual coleção aconteceu.
+ *  • Ao concluir, grava a marca legacyImportedAt nas configurações: é o que impede a subida do
+ *    servidor de importar o mesmo JSON de novo (src/app.js).
  */
 async function importJson(db, data) {
   const report = { collections: {}, warnings: [] };
@@ -97,6 +99,15 @@ async function importJson(db, data) {
         report.settings = Object.keys(fresh);
       }
     }
+
+    // Marca de "já importado", na mesma transação: com o banco vazio de novo (todos os restaurantes excluídos), a próxima
+    // subida não pode trazer o db.json de volta, com os acessos e as senhas antigas. Fica a data da primeira importação
+    // (o que já está no banco vale, como nas outras configurações) e a marca não entra no relatório, que lista só o que veio do JSON
+    await t.query(
+      `INSERT INTO settings (id, data) VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data || settings.data`,
+      [JSON.stringify({ legacyImportedAt: new Date().toISOString() })],
+    );
   });
   return report;
 }
