@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
+const { Client } = require('pg');
 const { Database } = require('../../src/db/Database');
 const { startPgServer } = require('../helpers/pg-server');
 
@@ -241,6 +242,263 @@ describe('resiliência do driver pg', () => {
     } finally {
       await db?.close();
       await pg.close();
+    }
+  });
+
+  it('falha ao pegar a conexão, no BEGIN ou no COMMIT sai marcada como erro do banco; erro do próprio callback, não', async () => {
+    const pg = await startPgServer();
+    let db;
+    try {
+      db = await Database.open({ databaseUrl: pg.url, databasePoolMax: 1 });
+      const { pool } = db.driver;
+
+      // pool.connect rejeita (pool esgotado, banco fora do ar): não há SQLSTATE, mas é falha do banco
+      pool.connect = () => Promise.reject(new Error('pool esgotado (simulado)'));
+      const byConnect = await db.tx(async () => {}).catch((err) => err);
+      delete pool.connect;
+      assert.equal(byConnect.message, 'pool esgotado (simulado)');
+      assert.equal(byConnect.db, true);
+
+      // BEGIN e COMMIT falham na conexão emprestada (o resto da conversa com o banco segue normal)
+      for (const command of ['BEGIN', 'COMMIT']) {
+        const connect = pool.connect.bind(pool);
+        let borrowed;
+        pool.connect = async () => {
+          borrowed = await connect();
+          const query = borrowed.query.bind(borrowed);
+          borrowed.query = (sql, ...rest) => (sql === command ? Promise.reject(new Error(`${command} simulado`)) : query(sql, ...rest));
+          return borrowed;
+        };
+        const err = await db.tx((t) => t.query('SELECT 1')).catch((e) => e);
+        delete pool.connect;
+        delete borrowed.query;
+        assert.equal(err.message, `${command} simulado`);
+        assert.equal(err.db, true, `${command} que falha tem de sair como erro do banco`);
+      }
+
+      // O erro lançado pelo próprio callback continua sem a marca, e o pool segue saudável
+      assert.equal((await db.tx(async () => { throw new Error('meu erro'); }).catch((err) => err)).db, undefined);
+      assert.equal((await db.one('SELECT 4 AS n')).n, 4);
+    } finally {
+      await db?.close();
+      await pg.close();
+    }
+  });
+
+  it('as conexões do pool saem com limite de tempo por comando e por transação parada (também a emprestada à transação)', async () => {
+    const pg = await startPgServer();
+    let db;
+    try {
+      db = await Database.open({ databaseUrl: pg.url, databasePoolMax: 1 });
+      assert.equal((await db.one('SHOW statement_timeout')).statement_timeout, '30s');
+      assert.equal((await db.one('SHOW idle_in_transaction_session_timeout')).idle_in_transaction_session_timeout, '1min');
+      assert.equal(await db.tx(async (t) => (await t.one('SHOW statement_timeout')).statement_timeout), '30s');
+    } finally {
+      await db?.close();
+      await pg.close();
+    }
+  });
+
+  it('aplicar os limites não gera aviso de obsolescência do pg (consulta enquanto a conexão nova ainda roda o SET)', async () => {
+    // O pg só emite esse aviso uma vez por processo: por isso um processo novo, em que o aviso vira erro (--throw-deprecation)
+    const pg = await startPgServer();
+    const script = `
+      const { Database } = require(${JSON.stringify(require.resolve('../../src/db/Database'))});
+      (async () => {
+        const db = await Database.open({ databaseUrl: process.env.DATABASE_URL, databasePoolMax: 2 });
+        await Promise.all([db.one('SELECT 1 AS n'), db.tx((t) => t.one('SELECT 2 AS n'))]);
+        await db.close();
+      })().catch((err) => { console.error(err); process.exit(1); });
+    `;
+    try {
+      const run = await new Promise((resolve) => {
+        execFile(process.execPath, ['--throw-deprecation', '-e', script], { env: { ...process.env, DATABASE_URL: pg.url }, timeout: 60000 }, (error, stdout, stderr) => {
+          resolve({ code: error ? (error.code ?? 1) : 0, stderr });
+        });
+      });
+      assert.equal(run.code, 0, run.stderr);
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
+/** Logger que guarda o que recebe, por nível. */
+function recordingLogger() {
+  const lines = { log: [], error: [] };
+  return { lines, log: (...args) => lines.log.push(args.join(' ')), error: (...args) => lines.error.push(args.join(' ')) };
+}
+
+/**
+ * Cliente falso da trava, no lugar do pg.Client: pg_try_advisory_lock só dá certo a partir da tentativa
+ * `freeOnAttempt` (o outro dono soltou a trava); `log` guarda, em ordem, tudo que a trava pediu a ele.
+ */
+function fakeLockClient({ freeOnAttempt = Infinity, failConnect = false, failUnlock = false } = {}) {
+  const log = [];
+  const handlers = {};
+  const client = {
+    log,
+    handlers,
+    attempts: 0,
+    on(event, handler) { handlers[event] = handler; return client; },
+    async connect() {
+      log.push('connect');
+      if (failConnect) throw new Error('connect ECONNREFUSED 127.0.0.1:5432');
+    },
+    async query(sql) {
+      log.push(sql);
+      if (sql.includes('pg_try_advisory_lock')) {
+        client.attempts += 1;
+        return { rows: [{ ok: client.attempts >= freeOnAttempt }] };
+      }
+      if (sql.includes('pg_advisory_unlock') && failUnlock) throw new Error('Connection terminated unexpectedly');
+      return { rows: [{ ok: true }] };
+    },
+    async end() { log.push('end'); },
+  };
+  return client;
+}
+
+describe('trava de instância única (Database#lockSingleInstance)', () => {
+  let pg;
+  let masked;
+  before(async () => {
+    pg = await startPgServer();
+    masked = pg.url.replace(':postgres@', ':***@');
+  });
+  after(async () => { await pg.close(); });
+
+  const open = () => Database.open({ databaseUrl: pg.url, databasePoolMax: 1 });
+  const busyMessage = () => `Outra instância do Studio Coral já está usando este banco (${masked}). Rode uma instância por vez.`;
+
+  // O servidor de teste (PGlite numa porta TCP) joga todas as conexões numa sessão só, e a trava por sessão é
+  // reentrante: duas instâncias nunca disputariam nada aqui. A disputa é testada com o cliente falso (abaixo);
+  // com o servidor de verdade fica provado que a trava existe no banco e que close() a solta.
+  it('no PostgreSQL de verdade: a trava aparece em pg_locks enquanto o banco está aberto e some ao fechar', async () => {
+    const db = await open();
+    const probe = new Client({ connectionString: pg.url });
+    await probe.connect();
+    try {
+      // A chave é fixa (727301001): todas as versões do sistema precisam disputar a mesma
+      const held = async () => (await probe.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = 727301001")).rows[0].n;
+      assert.equal(await held(), 0);
+      await db.lockSingleInstance({ logger: recordingLogger() });
+      assert.equal(await held(), 1);
+      await db.close();
+      assert.equal(await held(), 0, 'close() solta a trava de verdade, não só fecha a conexão');
+    } finally {
+      await probe.end();
+      await db.close();
+    }
+  });
+
+  it('banco ocupado: tenta de novo até o prazo, desiste com a mensagem exata e fecha o client da trava', async () => {
+    const db = await open();
+    const fake = fakeLockClient();
+    const logger = recordingLogger();
+    try {
+      const started = Date.now();
+      await assert.rejects(db.lockSingleInstance({ waitMs: 300, retryMs: 20, logger, createClient: () => fake }), { message: busyMessage() });
+      assert.ok(Date.now() - started >= 250, 'esperou o prazo antes de desistir');
+      assert.ok(fake.attempts >= 3, `tentou de novo (${fake.attempts} tentativas)`);
+      assert.deepEqual(fake.log.filter((entry) => entry === 'end'), ['end'], 'fechou o client uma vez só');
+      assert.ok(!fake.log.some((entry) => entry.includes('pg_advisory_unlock')), 'nunca travou: nada a soltar');
+      assert.equal(logger.lines.log.length, 1, 'avisa uma vez que está esperando');
+      assert.match(logger.lines.log[0], /esperando/);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('a espera nunca passa de waitMs, mesmo com o intervalo entre tentativas bem maior', async () => {
+    const db = await open();
+    const fake = fakeLockClient();
+    try {
+      const started = Date.now();
+      await assert.rejects(db.lockSingleInstance({ waitMs: 300, retryMs: 60000, logger: recordingLogger(), createClient: () => fake }), { message: busyMessage() });
+      assert.ok(Date.now() - started < 5000, 'não dormiu o intervalo inteiro (60 s)');
+      assert.ok(fake.attempts >= 2, 'ainda tenta uma última vez no prazo');
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('banco que fica livre durante a espera: assume a trava e, ao fechar, solta e fecha o client antes do pool', async () => {
+    const db = await open();
+    const fake = fakeLockClient({ freeOnAttempt: 3 });
+    await db.lockSingleInstance({ waitMs: 5000, retryMs: 10, logger: recordingLogger(), createClient: () => fake });
+    assert.equal(fake.attempts, 3);
+    assert.ok(!fake.log.includes('end'), 'o client segue aberto: a trava vale enquanto a conexão viver');
+
+    const poolEnd = db.driver.pool.end.bind(db.driver.pool);
+    db.driver.pool.end = () => { fake.log.push('pool.end'); return poolEnd(); };
+    await db.close();
+    const [unlock, ...after] = fake.log.slice(-3);
+    assert.ok(unlock.includes('pg_advisory_unlock'), `esperava o unlock explícito, veio: ${unlock}`);
+    assert.deepEqual(after, ['end', 'pool.end']);
+  });
+
+  it('chamar de novo não abre outra conexão (uma trava por Database)', async () => {
+    const db = await open();
+    let created = 0;
+    const createClient = () => { created += 1; return fakeLockClient({ freeOnAttempt: 1 }); };
+    try {
+      await db.lockSingleInstance({ logger: recordingLogger(), createClient });
+      await db.lockSingleInstance({ logger: recordingLogger(), createClient });
+      assert.equal(created, 1);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('a conexão que guarda a trava caiu: vai para o log (a trava se perde com ela)', async () => {
+    const db = await open();
+    const fake = fakeLockClient({ freeOnAttempt: 1 });
+    const logger = recordingLogger();
+    try {
+      await db.lockSingleInstance({ logger, createClient: () => fake });
+      assert.deepEqual(logger.lines.error, []);
+      fake.handlers.error(new Error('Connection terminated unexpectedly'));
+      assert.equal(logger.lines.error.length, 1);
+      assert.match(logger.lines.error[0], /trava de instância única caiu: Connection terminated unexpectedly/);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('fechar com a conexão da trava já morta não falha: o erro do unlock é engolido e o pool fecha mesmo assim', async () => {
+    const db = await open();
+    const fake = fakeLockClient({ freeOnAttempt: 1, failUnlock: true });
+    await db.lockSingleInstance({ logger: recordingLogger(), createClient: () => fake });
+    const poolEnd = db.driver.pool.end.bind(db.driver.pool);
+    let poolClosed = false;
+    db.driver.pool.end = () => { poolClosed = true; return poolEnd(); };
+    await db.close();
+    assert.ok(fake.log.includes('end'), 'o client foi fechado');
+    assert.equal(poolClosed, true);
+  });
+
+  it('não conseguir abrir a conexão da trava é um erro claro, sem a senha, e não deixa o client aberto', async () => {
+    const db = await open();
+    const fake = fakeLockClient({ failConnect: true });
+    try {
+      await assert.rejects(db.lockSingleInstance({ logger: recordingLogger(), createClient: () => fake }), (err) => {
+        assert.equal(err.message, `Não foi possível abrir a conexão da trava de instância única (${masked}): connect ECONNREFUSED 127.0.0.1:5432`);
+        assert.ok(err.cause instanceof Error, 'o erro original fica em cause');
+        return true;
+      });
+      assert.ok(fake.log.includes('end'));
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('no PGlite é um no-op: a pasta já tem a própria trava e não há conexão a abrir', async () => {
+    const db = await Database.open({ pgliteDir: 'memory://' });
+    try {
+      await db.lockSingleInstance({ createClient: () => { throw new Error('não deveria abrir cliente nenhum'); } });
+    } finally {
+      await db.close();
     }
   });
 });

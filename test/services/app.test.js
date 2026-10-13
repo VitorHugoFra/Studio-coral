@@ -34,6 +34,54 @@ describe('subida do app', () => {
     assert.equal(closed.length, 1);
     assert.equal(stopped, true);
   });
+
+  it('trava a instância única logo depois de abrir o banco, antes de migrar', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
+    const logger = { log() {}, info() {}, warn() {}, error() {} };
+    const original = Database.prototype.lockSingleInstance;
+    const calls = [];
+    Database.prototype.lockSingleInstance = async function spy(options) {
+      // Ainda não migrou: a tabela de controle das migrações não existe
+      const migrated = (await this.one("SELECT to_regclass('public.schema_migrations') AS t")).t !== null;
+      calls.push({ options, migrated });
+      return original?.call(this, options);
+    };
+    let instance;
+    try {
+      instance = await createApp({ config: { ...baseConfig, dataDir, databaseUrl: '', pgliteDir: 'memory://' }, seed: false, logger });
+    } finally {
+      Database.prototype.lockSingleInstance = original;
+      await instance?.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].migrated, false, 'a trava vem antes das migrações');
+    assert.equal(calls[0].options.logger, logger, 'os avisos da espera vão para o logger da aplicação');
+  });
+
+  it('se outra instância já usa o banco, a subida falha com a mensagem da trava e o banco é fechado', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
+    const busy = 'Outra instância do Studio Coral já está usando este banco (postgres://x:***@h/d). Rode uma instância por vez.';
+    const original = Database.prototype.lockSingleInstance;
+    const close = Database.prototype.close;
+    const closed = [];
+    Database.prototype.lockSingleInstance = async () => { throw new Error(busy); };
+    Database.prototype.close = function spy() { closed.push(this); return close.call(this); };
+    let started = null; // só preenchido se a subida (erradamente) der certo: assim o teste sempre desliga o que ligou
+    try {
+      await assert.rejects(
+        createApp({ config: { ...baseConfig, dataDir, databaseUrl: '', pgliteDir: 'memory://' }, seed: false, logger: { log() {}, info() {}, warn() {}, error() {} } })
+          .then((instance) => { started = instance; }),
+        { message: busy },
+      );
+    } finally {
+      Database.prototype.lockSingleInstance = original;
+      Database.prototype.close = close;
+      await started?.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+    assert.equal(closed.length, 1, 'o banco não fica aberto depois da falha');
+  });
 });
 
 describe('rotas do painel: concorrência e falhas do banco', () => {

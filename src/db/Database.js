@@ -1,5 +1,12 @@
 const fs = require('fs');
 
+// Chave da trava de instância única (advisory lock). É fixa: todas as versões do sistema precisam disputar a mesma.
+const INSTANCE_LOCK_KEY = 727301001;
+// Limites por conexão no PostgreSQL de produção: um comando preso não prende o servidor para sempre
+// e uma transação esquecida aberta não segura linhas e travas
+const STATEMENT_TIMEOUT_MS = 30000;
+const IDLE_IN_TRANSACTION_TIMEOUT_MS = 60000;
+
 /**
  * Acesso ao PostgreSQL.
  *
@@ -61,6 +68,22 @@ class Database {
     return this.driver.tx((inner) => fn(new Database(inner)));
   }
 
+  /**
+   * Garante uma instância do servidor por banco. Com um PostgreSQL compartilhado, duas instâncias (um deploy
+   * sobreposto, um computador de desenvolvimento com a URL de produção) disputariam a fila de disparo: reenvio
+   * duplicado e envios "consumidos" pelo simulador. A trava é um advisory lock de sessão, numa conexão própria
+   * (fora do pool) que fica aberta enquanto o banco estiver em uso; se ela cair, o PostgreSQL solta a trava.
+   * Por isso a conexão precisa ser em modo sessão (um pooler em modo transação, como o do Supabase na porta 6543,
+   * não serve). Chame logo depois de abrir o banco, antes de migrar.
+   *
+   * Se outra instância já tem a trava, tenta de novo a cada retryMs (1 s) até waitMs (30 s, o que cobre o
+   * "para e sobe" de um deploy) e então lança um erro. No PGlite não faz nada (a pasta já tem a própria trava).
+   * Opções: waitMs, retryMs, logger e createClient (os testes trocam o pg.Client por um falso).
+   */
+  async lockSingleInstance(options) {
+    await this.driver.lockSingleInstance?.(options);
+  }
+
   /** Fecha o banco. Pode ser chamado mais de uma vez (SIGINT e SIGTERM): só a primeira chamada fecha de fato. */
   close() {
     this.closing ??= this.driver.close();
@@ -76,6 +99,11 @@ class Database {
 function markAsDbError(err) {
   if (err && typeof err === 'object') err.db = true;
   return err;
+}
+
+/** Para usar em .catch(): marca o erro como falha do banco e o lança de novo. */
+function rethrowAsDbError(err) {
+  throw markAsDbError(err);
 }
 
 /** Endereço do banco sem a senha, para as mensagens de erro. */
@@ -94,7 +122,18 @@ class PgDriver {
   static async connect(url, max, logger) {
     // eslint-disable-next-line global-require
     const { Pool } = require('pg');
-    const pool = new Pool({ connectionString: url, max, connectionTimeoutMillis: 10000 });
+    const pool = new Pool({
+      connectionString: url,
+      max,
+      connectionTimeoutMillis: 10000,
+      // Os limites de tempo valem por conexão: o pool roda isto em cada conexão nova e só a entrega depois (com o evento
+      // 'connect' a primeira consulta de quem a pediu chegaria com o SET ainda em andamento, o que o pg 8 já marca como
+      // obsoleto). Se o SET falhar, só registramos: a conexão serve do mesmo jeito.
+      // Uma migração demorada de verdade pode começar com SET LOCAL statement_timeout = 0.
+      onConnect: (client) => client
+        .query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}; SET idle_in_transaction_session_timeout = ${IDLE_IN_TRANSACTION_TIMEOUT_MS}`)
+        .catch((err) => logger.error(`[db] Não foi possível aplicar os limites de tempo à conexão com o PostgreSQL: ${err.message}`)),
+    });
     // Conexão ociosa que cai (reinício do banco, rede) não pode derrubar o servidor: o pool reconecta na próxima consulta
     pool.on('error', (err) => logger.error(`[db] Conexão ociosa com o PostgreSQL caiu: ${err.message}`));
     try {
@@ -103,12 +142,14 @@ class PgDriver {
       await pool.end().catch(() => {});
       throw new Error(`Não foi possível conectar ao PostgreSQL (${maskUrl(url)}): ${err.message}`);
     }
-    return new PgDriver(pool, logger);
+    return new PgDriver(pool, logger, url);
   }
 
-  constructor(pool, logger) {
+  constructor(pool, logger, url) {
     this.pool = pool;
     this.logger = logger;
+    this.url = url;
+    this.instanceLock = null;
     this.kind = 'pg';
   }
 
@@ -121,7 +162,9 @@ class PgDriver {
   }
 
   async tx(fn) {
-    const client = await this.pool.connect();
+    // Falhas de conexão, do BEGIN e do COMMIT são falhas do banco mesmo sem SQLSTATE (pool esgotado, conexão que caiu).
+    // As consultas de dentro de fn já saem marcadas pelo Database; o erro lançado pela própria fn, não
+    const client = await this.pool.connect().catch(rethrowAsDbError);
     // Enquanto o cliente está emprestado, o pool não vigia o 'error' dele. Sem este listener, uma conexão que cai
     // no meio da transação vira exceção não tratada e derruba o servidor. A consulta em andamento já rejeita, então
     // a transação falha e desfaz; aqui só registramos a queda e marcamos o cliente como quebrado.
@@ -132,9 +175,9 @@ class PgDriver {
     };
     client.on('error', onError);
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN').catch(rethrowAsDbError);
       const result = await fn(new PgTxDriver(client));
-      await client.query('COMMIT');
+      await client.query('COMMIT').catch(rethrowAsDbError);
       return result;
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
@@ -146,9 +189,74 @@ class PgDriver {
     }
   }
 
-  close() {
-    return this.pool.end();
+  /** Ver Database#lockSingleInstance. Chamar de novo não abre outra conexão. */
+  async lockSingleInstance({ waitMs = 30000, retryMs = 1000, logger = this.logger, createClient = openLockClient } = {}) {
+    if (this.instanceLock) return;
+    this.instanceLock = await acquireInstanceLock(this.url, { waitMs, retryMs, logger, createClient });
   }
+
+  async close() {
+    try {
+      // A trava é solta antes de fechar o pool; se a conexão dela já morreu, o erro é engolido e o pool fecha do mesmo jeito
+      await this.instanceLock?.release();
+    } finally {
+      await this.pool.end();
+    }
+  }
+}
+
+/** A conexão própria da trava: fora do pool, com keepalive para notar uma conexão que morreu em silêncio. */
+function openLockClient(url) {
+  // eslint-disable-next-line global-require
+  const { Client } = require('pg');
+  return new Client({ connectionString: url, connectionTimeoutMillis: 10000, keepAlive: true });
+}
+
+/**
+ * Abre a conexão da trava e tenta o pg_try_advisory_lock até conseguir ou acabar o prazo (waitMs); a espera
+ * entre as tentativas nunca passa do prazo. Devolve { release() }, que solta a trava e fecha a conexão sem lançar erro.
+ */
+async function acquireInstanceLock(url, { waitMs, retryMs, logger, createClient }) {
+  const client = createClient(url);
+  // A trava vale enquanto esta conexão viver. Se ela cair (rede, reinício do banco), o PostgreSQL a solta e outra instância
+  // pode assumir: aqui só dá para avisar. Sem este listener, o erro de uma conexão ociosa derrubaria o servidor
+  client.on('error', (err) => logger.error(`[db] A conexão que guarda a trava de instância única caiu: ${err.message}. Outra instância pode assumir este banco.`));
+  const closeQuietly = () => client.end().catch(() => {});
+
+  try {
+    await client.connect();
+  } catch (err) {
+    await closeQuietly();
+    throw new Error(`Não foi possível abrir a conexão da trava de instância única (${maskUrl(url)}): ${err.message}`, { cause: err });
+  }
+
+  try {
+    const deadline = Date.now() + waitMs;
+    let waiting = false;
+    for (;;) {
+      const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS ok', [INSTANCE_LOCK_KEY]);
+      if (rows[0].ok) break;
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error(`Outra instância do Studio Coral já está usando este banco (${maskUrl(url)}). Rode uma instância por vez.`);
+      if (!waiting) {
+        waiting = true;
+        logger.log?.(`⏳ Outra instância está usando o banco; esperando até ${Math.ceil(waitMs / 1000)} s para ela terminar...`);
+      }
+      await new Promise((resolve) => { setTimeout(resolve, Math.min(retryMs, left)); });
+    }
+  } catch (err) {
+    await closeQuietly();
+    throw err;
+  }
+
+  return {
+    async release() {
+      // Solta de forma explícita antes de fechar: num PostgreSQL de verdade fechar a conexão já bastaria, mas o que fica
+      // entre nós e o banco (um proxy, o servidor de teste) pode manter a sessão viva, e a trava com ela
+      await client.query('SELECT pg_advisory_unlock($1)', [INSTANCE_LOCK_KEY]).catch(() => {});
+      await closeQuietly();
+    },
+  };
 }
 
 /** Cliente já dentro de uma transação; transações aninhadas reaproveitam a atual. */
@@ -204,6 +312,9 @@ class PgliteDriver {
   tx(fn) {
     return this.lite.transaction((t) => fn(new PgliteTxDriver(t)));
   }
+
+  /** A pasta do PGlite já tem a própria trava (lockDir): não há o que travar no banco. */
+  async lockSingleInstance() {}
 
   async close() {
     try {

@@ -19,6 +19,8 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
   const db = await Database.open({ ...config, logger });
   let dispatch = null;
   try {
+    // Uma instância por banco, antes de migrar ou mexer em qualquer dado (espera o "para e sobe" de um deploy)
+    await db.lockSingleInstance({ logger });
     await migrate(db, { logger });
     const container = buildContainer({ config, db, logger, overrides });
     const repos = container.resolve('repos');
