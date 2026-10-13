@@ -11,6 +11,23 @@ const { createPublicRoutes } = require('./http/public');
 const { seed: seedDemo } = require('./seed');
 
 /**
+ * Último tratador de erros do Express. Sem ele, um erro que escapa das rotas públicas (/r/:code, pedidos) ou do
+ * middleware de autenticação cai no tratador padrão, que mostra a pilha em HTML fora de NODE_ENV=production,
+ * até para o cliente final que abriu um link. Aqui: registra e responde 500 sem detalhe nenhum (JSON em /api,
+ * texto simples no resto). Erro do cliente (JSON malformado, corpo grande demais) mantém o status 4xx.
+ */
+function finalErrorHandler(logger) {
+  return (err, req, res, next) => { // os 4 argumentos são o que faz o Express tratar isto como tratador de erros
+    const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+    if (status === 500) logger.error('[http]', err);
+    if (res.headersSent) return next(err); // a resposta já começou: só o tratador do Express consegue encerrar a conexão
+    const message = status === 500 ? 'Erro interno. Tente de novo em instantes.' : 'Requisição inválida.';
+    if (req.path === '/api' || req.path.startsWith('/api/')) return res.status(status).json({ error: message });
+    return res.status(status).type('text/plain').send(message);
+  };
+}
+
+/**
  * Monta a aplicação: banco, dados, rotas e fila de disparo.
  * O server.js só chama createApp() e sobe a porta; os testes fazem o mesmo
  * numa porta livre, com configuração, provedores e logger próprios.
@@ -58,6 +75,7 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
     app.get(['/app', '/app/*'], (req, res) => res.sendFile(path.join(publicDir, 'app.html')));
     app.use(express.static(publicDir, { extensions: ['html'] }));
     app.use((req, res) => res.status(404).sendFile(path.join(publicDir, 'index.html')));
+    app.use(finalErrorHandler(logger));
 
     dispatch = container.resolve('dispatch');
     const messaging = container.resolve('messaging');
@@ -101,4 +119,4 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
   }
 }
 
-module.exports = { createApp };
+module.exports = { createApp, finalErrorHandler };
