@@ -4,8 +4,10 @@
  * demo: true — a fila nunca os envia por um canal real, só pelo simulador.
  *
  *   npm run seed   → apaga a base e recria os dados de demonstração
+ *                    (num PostgreSQL de DATABASE_URL, só com: npm run seed -- --force)
  */
 const crypto = require('crypto');
+const { maskUrl } = require('./db/Database');
 const { AuthService } = require('./services/AuthService');
 
 const DAY = 864e5;
@@ -232,7 +234,16 @@ async function seed(repos, { reset = false } = {}) {
   });
 }
 
-module.exports = { seed };
+/**
+ * `npm run seed` apaga TUDO. No PGlite local (sem DATABASE_URL) isso é o esperado; num PostgreSQL de
+ * verdade, que pode ser o de produção, só com --force. Devolve a mensagem de recusa, ou null se pode seguir.
+ */
+function resetRefusal({ databaseUrl, args }) {
+  if (!databaseUrl || !args.includes('--reset') || args.includes('--force')) return null;
+  return `npm run seed apaga TODOS os dados de ${maskUrl(databaseUrl)}. Para confirmar, rode: npm run seed -- --force`;
+}
+
+module.exports = { seed, resetRefusal };
 
 if (require.main === module) {
   (async () => {
@@ -242,12 +253,20 @@ if (require.main === module) {
     const { migrate } = require('./db/migrate');
     const { createRepositories } = require('./db/repositories');
     /* eslint-enable global-require */
+    const args = process.argv.slice(2);
+    const refusal = resetRefusal({ databaseUrl: config.databaseUrl, args });
+    if (refusal) {
+      // Antes de abrir o banco: nada é tocado. exitCode (e não exit) deixa a mensagem terminar de sair
+      console.error(`✖ ${refusal}`);
+      process.exitCode = 1;
+      return;
+    }
     const db = await Database.open(config);
     try {
       await migrate(db);
       const repos = createRepositories(db);
       await repos.settings.load();
-      await seed(repos, { reset: process.argv.includes('--reset') });
+      await seed(repos, { reset: args.includes('--reset') });
       console.log('🌱 Base de demonstração recriada.');
     } finally {
       await db.close();

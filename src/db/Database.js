@@ -262,4 +262,4 @@ function isAlive(pid) {
   }
 }
 
-module.exports = { Database };
+module.exports = { Database, maskUrl };
