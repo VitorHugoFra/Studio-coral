@@ -44,12 +44,12 @@ npm start
 
 Os dados ficam no PostgreSQL.
 
-- **Sem configurar nada (desenvolvimento):** o sistema usa o **PGlite**, um PostgreSQL embutido, e grava em `data/pgdata`. Não é preciso instalar PostgreSQL.
-- **Produção:** defina `DATABASE_URL=postgres://usuario:senha@host:5432/banco` no `.env`. As tabelas são criadas e atualizadas sozinhas ao subir o servidor (pasta `migrations/`).
-- **Vindo da versão com `data/db.json`:** na primeira subida com o banco vazio, o conteúdo do JSON é importado automaticamente, e o arquivo é mantido como cópia. Para importar à mão: `npm run db:import-json -- caminho/do/db.json`.
-- `npm run seed` apaga o banco e recria os dados de demonstração.
+- **Sem configurar nada (desenvolvimento):** o sistema usa o **PGlite**, um PostgreSQL embutido, e grava em `data/pgdata`. Não é preciso instalar PostgreSQL. **O PGlite é só para desenvolvimento e testes**: em produção use um PostgreSQL de verdade.
+- **Produção:** defina `DATABASE_URL=postgres://usuario:senha@host:5432/banco` no `.env`. As tabelas são criadas e atualizadas sozinhas ao subir o servidor (pasta `migrations/`). Defina também, no ambiente do servidor, `NODE_ENV=production` e `TZ=America/Sao_Paulo`: os dias e os meses dos relatórios (e a janela de horário de envio) seguem o fuso do servidor.
+- **Vindo da versão com `data/db.json`:** na primeira subida com o banco vazio, o conteúdo do JSON é importado automaticamente, e o arquivo é mantido como cópia. Para importar à mão: `npm run db:import-json -- caminho/do/db.json`. A importação acontece uma vez só: ela deixa uma marca (`legacyImportedAt`) nas configurações, e se o banco ficar vazio de novo (todos os restaurantes excluídos), a próxima subida cria os dados de demonstração em vez de trazer o JSON de volta.
+- `npm run seed` apaga o banco e recria os dados de demonstração. **Com `DATABASE_URL` definida ele se recusa a rodar**, para não apagar um banco de produção por engano. Para confirmar que é isso mesmo, rode `npm run seed -- --force`: apaga TODOS os dados daquele banco.
 - Com o PGlite, só um processo usa a pasta por vez: pare o servidor antes de rodar `npm run seed` ou `npm run db:import-json`.
-- **Rode uma instância do servidor por vez**, também em produção: a fila de disparo, a cópia das configurações e os eventos em tempo real ficam na memória do processo.
+- **Uma instância do servidor por banco**, também em produção: a fila de disparo, a cópia das configurações e os eventos em tempo real ficam na memória do processo. O servidor garante isso ao subir: trava o banco (um *advisory lock* do PostgreSQL, numa conexão própria, além das do `DATABASE_POOL_MAX`) e, se outra instância já o estiver usando, espera até 30 s (o "para e sobe" de um deploy) e então falha avisando. A trava exige conexão **em modo sessão**: não use um pooler em modo transação, como o do Supabase na porta 6543; use a conexão direta ou o pooler em modo sessão.
 
 ### Testes
 
@@ -57,7 +57,7 @@ Os dados ficam no PostgreSQL.
 npm test
 ```
 
-Roda a bateria completa duas vezes: com o PostgreSQL embutido e pelo driver `pg`, como em produção. Não precisa de nada instalado além das dependências do projeto.
+Roda a bateria completa com o PostgreSQL embutido e repete os testes HTTP pelo driver `pg`, como em produção. Não precisa de nada instalado além das dependências do projeto (para a segunda parte, o próprio PGlite atende numa porta local). Só a segunda parte: `npm run test:pg`.
 
 ## O fluxo do plano de negócio no sistema
 
@@ -86,7 +86,7 @@ Fluxo: a agência monta a campanha e clica em **Enviar para aprovação** (passo
 
 ## Relatório mensal em PDF
 
-Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect, Node 18+), a partir da página `/relatorio`, com a sessão de quem pediu.
+Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect), a partir da página `/relatorio`, com a sessão de quem pediu.
 
 ## Site de pedidos do restaurante
 
