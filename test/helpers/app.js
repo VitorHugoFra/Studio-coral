@@ -100,9 +100,13 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
     if (process.env.TEST_PG === '1') {
       pg = await startPgServer();
       config.databaseUrl = pg.url;
-      config.databasePoolMax = 1;
+      config.databasePoolMax = 1; // uma conexão só: consultar fora da transação aberta trava o teste, o que garante o "dentro da tx, só o r"
     }
     instance = await createApp({ config, overrides, seed, logger });
+    // Sem esta conferência, um TEST_PG=1 que não chegou ao app rodaria a bateria "pelo pg" no PGlite, sem ninguém notar
+    if (pg && instance.container.resolve('db').kind !== 'pg') {
+      throw new Error(`TEST_PG=1, mas o app subiu com o driver ${instance.container.resolve('db').kind} (esperado: pg)`);
+    }
     const server = await instance.listen(0);
     // O objeto config é o mesmo que os serviços receberam: rotas e fila leem publicUrl a cada uso
     // e passam a usar a porta real (o MediaService guarda o valor ao ser criado; nenhum teste depende dele)
@@ -120,9 +124,16 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
       agency,
       client: () => createClient(config.publicUrl),
       async close() {
-        await instance.close();
-        await pg?.close();
-        fs.rmSync(dataDir, { recursive: true, force: true });
+        // Cada passo roda mesmo que o anterior falhe: servidor pg de pé ou pasta esquecida travam ou sujam a bateria
+        try {
+          await instance.close();
+        } finally {
+          try {
+            await pg?.close();
+          } finally {
+            fs.rmSync(dataDir, { recursive: true, force: true });
+          }
+        }
       },
     };
   } catch (err) {
