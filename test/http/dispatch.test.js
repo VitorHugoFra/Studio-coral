@@ -37,7 +37,8 @@ describe('disparo, link rastreável, pedidos e descadastro', () => {
     messages = await waitFor(async () => { const list = await getMessages(); return list.every((m) => m.status === 'delivered') && list; }, { message: 'entregas confirmadas' });
     assert.equal(messages.length, 3);
     for (const m of messages) {
-      assert.match(m.code, /^[A-Za-z0-9]{6}$/);
+      // Código do link com 8 caracteres (eram 6): mais espaço de combinações, para que o endereço de um link não seja adivinhável
+      assert.match(m.code, /^[A-Za-z0-9]{8}$/);
       assert.equal(m.provider, 'simulator');
       assert.match(m.providerMessageId, /^sim_/);
       assert.ok(m.sentAt && m.deliveredAt);

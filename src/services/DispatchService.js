@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { MessagingProvider } = require('../messaging/MessagingProvider');
 
 const ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const CODE_LENGTH = 8;
 const normalizeText = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 /** Meia-noite (UTC) de hoje: o limite diário conta os envios desde então. */
 const startOfTodayUtc = () => `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
@@ -84,9 +85,9 @@ class DispatchService {
 
   // ── Ciclo de vida da campanha ──────────────────────────────
 
+  /** Código do link rastreável: 8 caracteres, cada um sorteado por randomInt (sem o viés do resto da divisão por bytes). */
   newCode() {
-    const bytes = crypto.randomBytes(6);
-    return Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join('');
+    return Array.from({ length: CODE_LENGTH }, () => ALPHABET[crypto.randomInt(ALPHABET.length)]).join('');
   }
 
   trackingLink(code) {

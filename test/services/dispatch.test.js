@@ -1,5 +1,6 @@
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const { openTestDb } = require('../helpers/db');
 const { waitFor } = require('../helpers/app');
@@ -144,6 +145,34 @@ describe('fila de disparo: pedidos que chegam no meio de outro', () => {
     for (const id of created) await repos.campaigns.remove(id);
   });
   after(async () => { await db.close(); });
+
+  it('código do link: 8 caracteres, cada um sorteado por crypto.randomInt sobre o alfabeto inteiro (sem viés de módulo)', (t) => {
+    const draw = t.mock.method(crypto, 'randomInt', (max) => max - 1);
+    assert.equal(worker.newCode(), '99999999', 'o sorteio alcança o último caractere do alfabeto');
+    draw.mock.mockImplementation(() => 0);
+    assert.equal(worker.newCode(), 'aaaaaaaa', 'e o primeiro');
+    assert.equal(draw.mock.callCount(), 16, 'um sorteio por caractere');
+    draw.mock.restore();
+    assert.match(worker.newCode(), /^[a-km-zA-HJ-NP-Z2-9]{8}$/, 'sem os caracteres que se confundem (0, O, 1, l, I)');
+  });
+
+  it('código de link que já existe: o disparo refaz a transação com códigos novos e não duplica a fila', async () => {
+    const old = await newCampaign({ name: 'Já enviada', status: 'completed' });
+    const [contact] = await repos.contacts.byRestaurant(restaurant.id);
+    await repos.messages.insertMany([{ campaignId: old.id, restaurantId: restaurant.id, contactId: contact.id, name: contact.name, phone: contact.phone, code: 'repetido1', status: 'sent' }]);
+    const c = await newCampaign({ name: 'Colisão de código' });
+    // O primeiro código sorteado já é de outra mensagem (índice único): a primeira tentativa inteira é desfeita
+    let draws = 0;
+    worker.newCode = () => (draws++ === 0 ? 'repetido1' : `novo${draws}`);
+    await worker.start(c.id);
+    await concluded(c.id);
+    const messages = await repos.messages.byCampaign(c.id);
+    assert.equal(messages.length, await audienceSize(), 'a fila não foi criada duas vezes');
+    assert.equal(new Set(messages.map((m) => m.code)).size, messages.length, 'nenhum código repetido');
+    assert.ok(messages.every((m) => m.code !== 'repetido1'));
+    assert.ok(draws > messages.length, 'sorteou de novo depois da colisão');
+    assert.equal((await repos.messages.byCode('repetido1')).campaignId, old.id, 'o código antigo continua com a mensagem antiga');
+  });
 
   it('um disparo pedido com o passo da fila ocupado não se perde', async () => {
     const c = await newCampaign({ name: 'Despertar' });
