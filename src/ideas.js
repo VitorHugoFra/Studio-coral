@@ -1,6 +1,7 @@
 /**
  * Modelos de campanha (Etapa 3 — Criação).
  * Pontos de partida: a equipe ajusta ao cardápio e ao jeito de falar de cada restaurante.
+ * `filters` são filtros de compra (src/services/audienceFilters.js); `tags` só valem se o restaurante tiver essas tags.
  */
 const CAMPAIGN_IDEAS = [
   {
@@ -8,7 +9,8 @@ const CAMPAIGN_IDEAS = [
     title: 'Cliente sumido',
     objective: 'Reativar clientes inativos',
     occasion: 'Recorrente',
-    tags: ['inativo'],
+    tags: [],
+    filters: { lastOrderDays: { min: 30 } },
     message:
       '{Oi|Olá}, {{primeiro_nome}}, tudo bem? Aqui é do {{restaurante}}.\n\nFaz um tempo que você não pede com a gente, então deixamos um desconto separado: é só usar o cupom *{{cupom}}* no site até domingo.\n\n{{link}}',
   },
@@ -53,7 +55,8 @@ const CAMPAIGN_IDEAS = [
     title: 'Aniversariante',
     objective: 'Fidelização',
     occasion: 'Aniversário',
-    tags: ['aniversariante'],
+    tags: [],
+    filters: { birthday: { nextDays: 30 } },
     message:
       'Feliz aniversário, {{primeiro_nome}}! O {{restaurante}} deixou um presente pra você: o cupom *{{cupom}}* vale o mês inteiro nos pedidos pelo site.\n\n{{link}}',
   },
@@ -71,7 +74,8 @@ const CAMPAIGN_IDEAS = [
     title: 'Clientes frequentes',
     objective: 'Recompensar melhores clientes',
     occasion: 'Recorrente',
-    tags: ['vip'],
+    tags: [],
+    filters: { orders: { min: 5 } },
     message:
       '{{primeiro_nome}}, você é um dos clientes que mais pedem no {{restaurante}}, então quisemos agradecer: o cupom *{{cupom}}* dá 15% no próximo pedido pelo site.\n\n{{link}}',
   },

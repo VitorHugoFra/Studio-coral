@@ -43,6 +43,17 @@ class MessagesRepo extends Repository {
     return isUuid(campaignId) ? this.where('campaign_id = $1', [campaignId], 'seq') : [];
   }
 
+  /** Campanhas que o cliente recebeu, da mais nova para a mais antiga (ficha do cliente). */
+  async byContact(contactId, limit = 50) {
+    if (!isUuid(contactId)) return [];
+    const rows = await this.db.many(`
+      SELECT m.campaign_id, k.name AS campaign, m.status, m.sent_at, m.delivered_at, m.read_at, m.clicked_at, m.converted_at, m.replied_at, m.opt_out
+      FROM messages m JOIN campaigns k ON k.id = m.campaign_id
+      WHERE m.contact_id = $1
+      ORDER BY COALESCE(m.sent_at, m.created_at) DESC, m.seq DESC LIMIT $2`, [contactId, limit]);
+    return this.mapAll(rows);
+  }
+
   byCode(code) {
     return this.first('code = $1', [String(code)]);
   }

@@ -43,6 +43,7 @@
     .kpis > div:last-child .up { color: #9bd68a; }
     .kpis > div:last-child .down { color: #ff9c86; }
     .kpis > div:last-child .muted { color: rgba(243, 230, 207, .6); }
+    .kpis.kpis-4 { grid-template-columns: repeat(4, 1fr); }
     h2 { font-size: 15px; color: var(--green); margin-bottom: 8px; }
     .summary { font-size: 14px; line-height: 1.65; color: var(--ink-2); margin: 0; }
     .summary b { color: var(--ink); }
@@ -140,7 +141,7 @@
             <div class="highlight">Campanha que mais vendeu: <b x-text="r.best.name"></b>, com <b x-text="r.best.orders"></b> pedidos e <b x-text="money(r.best.revenue)"></b> em vendas pelo site.</div>
           </template>
         </div>
-        <div class="foot"><span>Studio Coral · vitorhdepaula1@gmail.com</span><span>1 / 2</span></div>
+        <div class="foot"><span>Studio Coral · vitorhdepaula1@gmail.com</span><span>1 / 3</span></div>
       </section>
 
       <!-- Página 2 -->
@@ -197,15 +198,82 @@
           </div>
 
           <div class="box" style="font-size:12px;color:var(--ink-2);line-height:1.6">
-            <b>Como os números são medidos.</b> Cada cliente recebe um link próprio. Um clique é contado quando a pessoa abre esse link, e um pedido é atribuído à campanha quando é feito no site do restaurante depois desse clique. Pedidos feitos por outros canais não entram neste relatório.
+            <b>Como os números são medidos.</b> Cada cliente recebe um link próprio. Um clique é contado quando a pessoa abre esse link, e um pedido é atribuído à campanha quando é feito no site do restaurante depois desse clique. Pedidos feitos por outros canais não entram nos números das campanhas; a página 3 mostra todas as vendas do restaurante.
           </div>
         </div>
-        <div class="foot"><span x-text="`Gerado em ${new Date(r.generatedAt).toLocaleString('pt-BR')}`"></span><span>2 / 2</span></div>
+        <div class="foot"><span x-text="`Gerado em ${new Date(r.generatedAt).toLocaleString('pt-BR')}`"></span><span>2 / 3</span></div>
+      </section>
+
+      <!-- Página 3: vendas de todos os canais -->
+      <section class="page">
+        <div class="head" style="padding-top:8mm;padding-bottom:7mm">
+          <span class="brand-lockup" style="font-size:12px"><span class="studio">STUDIO</span><span class="logo"></span></span>
+          <div class="t"><span style="font-size:15px" x-text="`${r.restaurant.name} · ${cap(r.monthLabel)}`"></span></div>
+        </div>
+        <div class="band"></div>
+        <div class="body">
+          <div>
+            <h2>Vendas do restaurante no mês</h2>
+            <p class="summary" style="font-size:13px;margin-bottom:8px">Todos os pedidos do mês, de todos os canais (site, campanhas e planilhas do caixa ou do iFood). Pedidos cancelados não entram.</p>
+            <div class="kpis kpis-4">
+              <div><div class="l">Pedidos</div><div class="v" x-text="r.sales.orders"></div><div class="delta" :class="deltaClass(r.sales.change.orders)" x-text="deltaText(r.sales.change.orders)"></div></div>
+              <div><div class="l">Ticket médio</div><div class="v" x-text="money(r.sales.ticket)"></div><div class="delta muted">por pedido</div></div>
+              <div><div class="l">Clientes</div><div class="v" x-text="r.sales.customers.buyers"></div><div class="delta muted" x-text="`${r.sales.customers.new} novos · ${r.sales.customers.returning} voltaram`"></div></div>
+              <div><div class="l">Faturamento</div><div class="v" x-text="money(r.sales.revenue)"></div><div class="delta" :class="deltaClass(r.sales.change.revenue)" x-text="deltaText(r.sales.change.revenue)"></div></div>
+            </div>
+          </div>
+
+          <template x-if="!r.sales.orders"><p class="empty-month">Nenhum pedido registrado neste mês.</p></template>
+
+          <template x-if="r.sales.orders">
+            <div class="two">
+              <div>
+                <h2>Por canal</h2>
+                <table>
+                  <thead><tr><th>Origem</th><th class="n">Pedidos</th><th class="n">Faturamento</th><th class="n">Parte</th></tr></thead>
+                  <tbody>
+                    <template x-for="s in r.sales.bySource" :key="s.source">
+                      <tr><td x-text="SOURCE[s.source] || s.source"></td><td class="n" x-text="s.orders"></td><td class="n" x-text="money(s.revenue)"></td><td class="n" x-text="pct(r.sales.revenue ? (s.revenue / r.sales.revenue) * 100 : 0)"></td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h2>Bairros com mais pedidos</h2>
+                <ul class="items">
+                  <template x-for="n in r.sales.neighborhoods" :key="n.name"><li><span x-text="n.name"></span><b x-text="`${n.orders} ${n.orders === 1 ? 'pedido' : 'pedidos'}`"></b></li></template>
+                  <template x-if="!r.sales.neighborhoods.length"><li class="muted">Os pedidos do mês não têm bairro.</li></template>
+                </ul>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="r.sales.orders">
+            <div class="two">
+              <div>
+                <h2>Itens mais vendidos</h2>
+                <ul class="items">
+                  <template x-for="it in r.sales.items" :key="it.name"><li><span x-text="it.name"></span><b x-text="`${it.qty}×`"></b></li></template>
+                  <template x-if="!r.sales.items.length"><li class="muted">Os pedidos do mês não têm itens detalhados.</li></template>
+                </ul>
+              </div>
+              <div>
+                <h2>Clientes para reativar</h2>
+                <div class="box">
+                  <b class="big" x-text="r.sales.inactive.total"></b>
+                  <span x-text="`já compraram, mas não pedem há mais de 30 dias. ${r.sales.inactive.authorized} ${r.sales.inactive.authorized === 1 ? 'pode' : 'podem'} receber uma campanha de reativação pelo WhatsApp.`"></span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="foot"><span>Studio Coral · vitorhdepaula1@gmail.com</span><span>3 / 3</span></div>
       </section>
     </div>
   </template>
 
 <script>
+const SOURCE = { site: 'Site', campaign: 'Campanhas', import: 'Planilha (caixa / iFood)', referral: 'Indicação' };
 const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 document.addEventListener('alpine:init', () => {
   Alpine.data('report', () => {
@@ -243,6 +311,8 @@ document.addEventListener('alpine:init', () => {
       money: (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
       pct: (v) => `${String(Math.round((v || 0) * 10) / 10).replace('.', ',')}%`,
       dateOf: (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+      SOURCE,
+      deltaClass: (d) => (d === null || d === undefined ? 'muted' : d >= 0 ? 'up' : 'down'),
       deltaText(d) { if (d === null || d === undefined) return 'sem comparação'; return `${d >= 0 ? '▲' : '▼'} ${String(Math.abs(d)).replace('.', ',')}% vs mês anterior`; },
       get kpis() {
         const t = this.r.totals; const c = this.r.change;

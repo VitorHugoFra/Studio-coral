@@ -344,7 +344,8 @@ describe('pedidos: checkout, contato, painel, acompanhamento e importação', ()
     assert.equal(teo.purchase.lastNeighborhood, 'Savassi');
     assert.ok(teo.purchase.firstAt <= teo.purchase.lastAt);
     assert.equal(teo.neighborhood, null, 'o bairro do contato continua vazio: o do pedido é calculado');
-    assert.deepEqual(list.find((x) => x.name === 'Sem Pedido').purchase, { orders: 0, total: 0, firstAt: null, lastAt: null, lastNeighborhood: null });
+    assert.equal(teo.purchase.topItem, 'Suco');
+    assert.deepEqual(list.find((x) => x.name === 'Sem Pedido').purchase, { orders: 0, total: 0, firstAt: null, lastAt: null, lastNeighborhood: null, weekday: null, topItem: null });
 
     // A ficha do contato guarda aniversário e bairro informados pela agência
     const edited = await ctx.agency.put(`/api/contacts/${teo.id}`, { birthDay: 3, birthMonth: 12, neighborhood: 'Lourdes' });

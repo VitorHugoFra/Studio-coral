@@ -4,6 +4,10 @@ const { Repository } = require('./base');
 /** Status em andamento (quadro de pedidos), na ordem em que o pedido avança. */
 const ACTIVE_STATUSES = ['new', 'preparing', 'dispatched'];
 
+// Itens do pedido como array jsonb (pedidos antigos podem ter outra coisa) e a quantidade de cada item (padrão 1)
+const ITEMS = (alias) => `CASE WHEN jsonb_typeof(${alias}.items) = 'array' THEN ${alias}.items ELSE '[]'::jsonb END`;
+const QTY = (alias) => `CASE WHEN ${alias}->>'qty' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (${alias}->>'qty')::numeric ELSE 1 END`;
+
 const table = defineTable({
   name: 'orders',
   columns: ['restaurantId', 'campaignId', 'messageId', 'contactId', 'code', 'customerName', 'orderId', 'value', 'items',
@@ -92,25 +96,61 @@ class OrdersRepo extends Repository {
     return row;
   }
 
-  /**
-   * Perfil de compra por contato, calculado na hora: pedidos, total, primeira e última compra e o
-   * bairro do último pedido que tem bairro. Pedidos cancelados não contam.
-   */
-  async profiles(restaurantId) {
+  /** Pedidos de um cliente, do mais novo para o mais antigo (ficha do cliente). */
+  async byContact(contactId, limit = 100) {
+    if (!isUuid(contactId)) return [];
+    return this.mapAll(await this.db.many('SELECT * FROM orders WHERE contact_id = $1 ORDER BY created_at DESC, id LIMIT $2', [contactId, limit]));
+  }
+
+  /** Itens que o cliente mais pediu (unidades), sem os pedidos cancelados. */
+  async topItemsOfContact(contactId, limit = 5) {
+    if (!isUuid(contactId)) return [];
     const rows = await this.db.many(`
-      SELECT contact_id, count(*)::int AS orders, COALESCE(sum(value), 0) AS total,
-        min(created_at) AS first_at, max(created_at) AS last_at,
-        (array_agg(neighborhood ORDER BY created_at DESC) FILTER (WHERE neighborhood IS NOT NULL AND neighborhood <> ''))[1] AS last_neighborhood
-      FROM orders
-      WHERE contact_id IS NOT NULL AND status <> 'canceled' AND ($1::uuid IS NULL OR restaurant_id = $1::uuid)
-      GROUP BY contact_id`, [scopeId(restaurantId)]);
-    return new Map(rows.map((r) => [r.contact_id, {
-      orders: r.orders,
-      total: Number(r.total),
-      firstAt: r.first_at instanceof Date ? r.first_at.toISOString() : r.first_at,
-      lastAt: r.last_at instanceof Date ? r.last_at.toISOString() : r.last_at,
-      lastNeighborhood: r.last_neighborhood || null,
-    }]));
+      SELECT it->>'name' AS name, sum(${QTY('it')})::float AS qty
+      FROM orders o CROSS JOIN LATERAL jsonb_array_elements(${ITEMS('o')}) AS it
+      WHERE o.contact_id = $1 AND o.status <> 'canceled' AND COALESCE(it->>'name', '') <> ''
+      GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT $2`, [contactId, limit]);
+    return rows.map((r) => ({ name: r.name, qty: r.qty }));
+  }
+
+  /**
+   * Vendas do restaurante no período, de todas as origens, sem os cancelados (página 3 do relatório).
+   * `ref` é o instante de referência da reativação: o fim do período, ou agora se o período não acabou.
+   */
+  async monthSales(restaurantId, from, to, ref = to) {
+    const scope = scopeId(restaurantId);
+    const base = "restaurant_id = $1 AND status <> 'canceled' AND created_at >= $2 AND created_at < $3";
+    const [totals, bySource, customers, neighborhoods, items, inactive] = await Promise.all([
+      this.db.one(`SELECT count(*)::int AS orders, COALESCE(sum(value), 0) AS revenue FROM orders WHERE ${base}`, [scope, from, to]),
+      this.db.many(`SELECT source, count(*)::int AS orders, COALESCE(sum(value), 0) AS revenue FROM orders WHERE ${base} GROUP BY source ORDER BY 2 DESC, 1`, [scope, from, to]),
+      this.db.one(`
+        WITH buyers AS (SELECT DISTINCT contact_id FROM orders WHERE ${base} AND contact_id IS NOT NULL),
+        firsts AS (SELECT contact_id, min(created_at) AS first_at FROM orders WHERE restaurant_id = $1 AND status <> 'canceled' AND contact_id IS NOT NULL GROUP BY contact_id)
+        SELECT count(*)::int AS buyers, count(*) FILTER (WHERE f.first_at >= $2)::int AS new FROM buyers b JOIN firsts f USING (contact_id)`, [scope, from, to]),
+      this.db.many(`SELECT neighborhood AS name, count(*)::int AS orders FROM orders WHERE ${base} AND COALESCE(neighborhood, '') <> '' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5`, [scope, from, to]),
+      this.db.many(`
+        SELECT it->>'name' AS name, sum(${QTY('it')})::float AS qty
+        FROM orders o CROSS JOIN LATERAL jsonb_array_elements(${ITEMS('o')}) AS it
+        WHERE o.restaurant_id = $1 AND o.status <> 'canceled' AND o.created_at >= $2 AND o.created_at < $3 AND COALESCE(it->>'name', '') <> ''
+        GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 6`, [scope, from, to]),
+      // Já compraram, mas a última compra (até a referência) foi há mais de 30 dias
+      this.db.one(`
+        SELECT count(*)::int AS total, count(*) FILTER (WHERE c.opt_in AND NOT c.opted_out)::int AS authorized
+        FROM (SELECT contact_id, max(created_at) AS last_at FROM orders
+              WHERE restaurant_id = $1 AND status <> 'canceled' AND contact_id IS NOT NULL AND created_at < $2
+              GROUP BY contact_id) x
+        JOIN contacts c ON c.id = x.contact_id
+        WHERE x.last_at < $3`, [scope, ref, new Date(new Date(ref).getTime() - 30 * 864e5).toISOString()]),
+    ]);
+    return {
+      orders: totals.orders,
+      revenue: Number(totals.revenue),
+      bySource: bySource.map((r) => ({ source: r.source, orders: r.orders, revenue: Number(r.revenue) })),
+      customers: { buyers: customers.buyers, new: customers.new, returning: customers.buyers - customers.new },
+      neighborhoods,
+      items: items.map((r) => ({ name: r.name, qty: r.qty })),
+      inactive,
+    };
   }
 
   async summary({ restaurantId, campaignId, attributedOnly = false, from, to } = {}) {
@@ -147,4 +187,4 @@ class OrdersRepo extends Repository {
   }
 }
 
-module.exports = { OrdersRepo, table, ACTIVE_STATUSES };
+module.exports = { OrdersRepo, table, ACTIVE_STATUSES, ITEMS, QTY };

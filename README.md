@@ -67,7 +67,7 @@ Roda a bateria completa com o PostgreSQL embutido e repete os testes HTTP pelo d
 | 1. Diagnóstico | **Restaurantes** → perfil, público, produtos, objetivos, tom de voz e cardápio |
 | 2. Planejamento | **Campanha → Planejamento**: objetivo, ocasião, cupom e destino do link |
 | 3. Criação | **Campanha → Mensagem**: variáveis `{{primeiro_nome}}`, variações `{Oi\|Olá}`, modelos prontos, imagem (upload por arrastar e soltar, galeria das já enviadas) e prévia no WhatsApp |
-| 4. Segmentação | **Campanha → Segmentação**: filtros por tags, somente contatos autorizados |
+| 4. Segmentação | **Campanha → Público**: tags e filtros de compra (última compra, pedidos, gasto, aniversário, bairro, item, dia preferido), somente contatos autorizados |
 | 5. Disparo | Fila com intervalos aleatórios, limite diário, horário comercial, teste, agendamento, pausa e cancelamento |
 | 6. Conversão | Um link único por cliente (`/r/xxxx`), que registra o clique e redireciona com UTMs |
 | 7. Compra | Pedido no site próprio (`/api/public/orders`), atribuído à campanha quando vem do link; sites externos informam a venda por `/api/public/conversions` ou pelo script `/t.js` |
@@ -87,7 +87,7 @@ Fluxo: a agência monta a campanha e clica em **Enviar para aprovação** (passo
 
 ## Relatório mensal em PDF
 
-Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect), a partir da página `/relatorio`, com a sessão de quem pediu.
+Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. A página 3 mostra as **vendas do restaurante** de todos os canais (site, campanhas e planilhas): pedidos, faturamento, ticket médio, clientes novos e que voltaram, vendas por canal, bairros e itens mais vendidos, e quantos clientes estão há mais de 30 dias sem pedir. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect), a partir da página `/relatorio`, com a sessão de quem pediu.
 
 ## Site de pedidos do restaurante
 
@@ -98,6 +98,25 @@ Layout de cardápio digital (`/demo/:slug`): carrossel de fotos, atalhos por se�
 **Contato do cliente final:** o pedido cria o contato pelo telefone ou atualiza o que já existe. Ele só fica autorizado a receber mensagens se a caixa for marcada, e um descadastrado nunca volta a ser autorizado pelo pedido. A lista de **Contatos** mostra, calculados na hora a partir dos pedidos, quantos pedidos o cliente fez, quanto gastou e quando foi a última compra; a ficha ganha aniversário e bairro (vazio, vale o do último pedido).
 
 **Acompanhamento:** depois do pedido, o cliente recebe o link `/pedido/:codigo`, que mostra o andamento (recebido, em preparo, saiu para entrega ou pronto para retirar, entregue) e se atualiza sozinho. A página não mostra telefone, CPF nem endereço.
+
+## Filtros de público e ficha do cliente
+
+Os filtros usam o histórico de pedidos (sem os cancelados), calculado na hora:
+
+| Filtro | Exemplo |
+|---|---|
+| Quantidade de pedidos | 5 ou mais; máximo 0 = quem nunca comprou |
+| Total gasto | a partir de R$ 300 |
+| Dias desde a última compra | sem comprar há 30+ dias (quem nunca comprou não entra) ou compraram nos últimos 7 dias |
+| Primeira e última compra | períodos de datas |
+| Aniversário | no mês escolhido ou nos próximos N dias (até 60) |
+| Bairro | o do contato ou, se vazio, o do último pedido |
+| Item | o que o cliente mais pede, ou qualquer item que já pediu |
+| Dia da semana preferido | o dia em que mais pediu |
+
+Todos valem juntos, e junto com as tags. Na campanha, ficam em **Público → Filtrar por compras**, com a contagem de quem recebe atualizando na hora; mudar os filtros zera a aprovação do restaurante, como mudar as tags. Os modelos "Cliente sumido", "Clientes frequentes" e "Aniversariante" já vêm com o filtro certo. Em **Contatos**, o mesmo botão filtra a lista.
+
+Clicar no nome de um contato abre a **ficha do cliente**: pedidos, total gasto, ticket médio, primeira e última compra, dia preferido, o que mais pede, o histórico de pedidos e as campanhas que recebeu (com leitura, clique e pedido). A ficha é só da agência, como a lista de contatos.
 
 ## Pedidos (painel)
 
