@@ -23,22 +23,50 @@
       <span class="brand-lockup"><span class="studio">STUDIO</span><span class="logo"></span></span>
     </div>
     <div class="login-form">
-      <form @submit.prevent="doLogin">
-        <h1>Entrar</h1>
-        <div class="field">
-          <label for="email">E-mail</label>
-          <input id="email" class="input" type="email" autocomplete="username" required x-model="login.email">
-        </div>
-        <div class="field">
-          <label for="pass">Senha</label>
-          <input id="pass" class="input" type="password" autocomplete="current-password" required x-model="login.password">
-        </div>
-        <p class="note red" x-show="login.error" x-text="login.error" style="margin:0"></p>
-        <button class="btn btn-dark btn-lg" :disabled="login.loading">
-          <span class="spin" x-show="login.loading"></span> Entrar
-        </button>
-        <a href="/" class="small">Voltar para o site</a>
-      </form>
+      <template x-if="!forgot">
+        <form @submit.prevent="doLogin">
+          <h1>Entrar</h1>
+          <div class="field">
+            <label for="email">E-mail</label>
+            <input id="email" class="input" type="email" autocomplete="username" required x-model="login.email">
+          </div>
+          <div class="field">
+            <label for="pass">Senha</label>
+            <input id="pass" class="input" type="password" autocomplete="current-password" required x-model="login.password">
+          </div>
+          <p class="note red" x-show="login.error" x-text="login.error" style="margin:0"></p>
+          <button class="btn btn-dark btn-lg" :disabled="login.loading">
+            <span class="spin" x-show="login.loading"></span> Entrar
+          </button>
+          <div class="row" style="justify-content:space-between">
+            <a href="#" class="small" @click.prevent="startForgot()">Esqueci minha senha</a>
+            <a href="/" class="small">Voltar para o site</a>
+          </div>
+        </form>
+      </template>
+      <template x-if="forgot">
+        <form @submit.prevent="sendForgot">
+          <h1>Nova senha</h1>
+          <template x-if="!forgot.delivery">
+            <div style="display:grid;gap:16px">
+              <p class="small muted" style="margin:0">Informe o e-mail do seu acesso. Você vai receber um link para criar uma senha nova.</p>
+              <div class="field">
+                <label for="forgot-email">E-mail</label>
+                <input id="forgot-email" class="input" type="email" autocomplete="username" required x-model="forgot.email">
+              </div>
+              <p class="note red" x-show="forgot.error" x-text="forgot.error" style="margin:0"></p>
+              <button class="btn btn-dark btn-lg" :disabled="forgot.loading"><span class="spin" x-show="forgot.loading"></span> Pedir nova senha</button>
+            </div>
+          </template>
+          <template x-if="forgot.delivery === 'email'">
+            <p class="note green" style="margin:0">Se este e-mail tiver acesso ao painel, mandamos para ele um link para criar uma senha nova. O link vale por 2 horas. Não chegou? Fale com o gerente do restaurante ou com a Studio Coral.</p>
+          </template>
+          <template x-if="forgot.delivery === 'manual'">
+            <p class="note green" style="margin:0">Pedido registrado. Se este e-mail tiver acesso ao painel, quem cuida dos acessos (o gerente do restaurante ou a Studio Coral) vai mandar para você um link para criar uma senha nova.</p>
+          </template>
+          <a href="#" class="small" @click.prevent="forgot = null">Voltar para a entrada</a>
+        </form>
+      </template>
     </div>
   </div>
 </template>
@@ -53,10 +81,14 @@
       <a href="#/pedidos" :class="{ active: route.name === 'pedidos' }" @click="navOpen=false"><span x-html="icon('bag')"></span> Pedidos <span class="count" x-show="newOrders" x-text="newOrders" :aria-label="`${newOrders} pedidos novos`"></span></a>
       <a href="#/campanhas" :class="{ active: route.name === 'campanhas' }" @click="navOpen=false"><span x-html="icon('send')"></span> Campanhas <span class="count" x-show="isRestaurant && pendingApprovals.length" x-text="pendingApprovals.length"></span></a>
       <a href="#/relatorios" :class="{ active: route.name === 'relatorios' }" @click="navOpen=false"><span x-html="icon('calendar')"></span> Relatórios</a>
+      <template x-if="isManager">
+        <a href="#/acessos" :class="{ active: route.name === 'acessos' }" @click="navOpen=false"><span x-html="icon('users')"></span> Equipe</a>
+      </template>
       <template x-if="!isRestaurant">
         <div style="display:contents">
           <a href="#/contatos" :class="{ active: route.name === 'contatos' }" @click="navOpen=false"><span x-html="icon('users')"></span> Contatos</a>
           <a href="#/restaurantes" :class="{ active: route.name === 'restaurantes' }" @click="navOpen=false"><span x-html="icon('store')"></span> Restaurantes <span class="count" x-text="restaurants.length"></span></a>
+          <a href="#/acessos" :class="{ active: route.name === 'acessos' }" @click="navOpen=false"><span x-html="icon('shield')"></span> Acessos</a>
           <div class="nav-label">Sistema</div>
           <a href="#/conexao" :class="{ active: route.name === 'conexao' }" @click="navOpen=false"><span x-html="icon('plug')"></span> Conexão</a>
           <a href="#/configuracoes" :class="{ active: route.name === 'configuracoes' }" @click="navOpen=false"><span x-html="icon('settings')"></span> Configurações</a>
@@ -90,11 +122,13 @@
         <template x-if="route.name === 'contatos' && !route.params.id"><div><h1>Contatos</h1><div class="sub">Clientes que autorizaram receber mensagens de cada restaurante</div></div></template>
         <template x-if="route.name === 'contatos' && contactProfile"><div><a href="#/contatos" class="back"><span x-html="icon('left',14)"></span> Contatos</a><h1 x-text="contactProfile.name || fmt.phone(contactProfile.phone)"></h1><div class="sub" x-text="contactProfile.restaurant"></div></div></template>
         <template x-if="route.name === 'restaurantes'"><div><h1>Restaurantes</h1></div></template>
+        <template x-if="route.name === 'acessos' && !isRestaurant"><div><h1>Acessos</h1><div class="sub">Quem entra no painel de cada restaurante</div></div></template>
+        <template x-if="route.name === 'acessos' && isRestaurant"><div><h1>Equipe</h1><div class="sub" x-text="`Quem do ${user.restaurant} entra no painel`"></div></div></template>
         <template x-if="route.name === 'conexao'"><div><h1>Conexão</h1><div class="sub">Por onde as mensagens são enviadas</div></div></template>
         <template x-if="route.name === 'configuracoes'"><div><h1>Configurações</h1></div></template>
         <template x-if="route.name === 'relatorios'"><div><h1>Relatórios mensais</h1><div class="sub">Resultado das campanhas do mês, pronto para enviar ao restaurante em PDF</div></div></template>
       </div>
-      <template x-if="!isRestaurant && ['painel','pedidos','campanhas','contatos'].includes(route.name) && !route.params.id">
+      <template x-if="!isRestaurant && ['painel','pedidos','campanhas','contatos','acessos'].includes(route.name) && !route.params.id">
         <select class="select" aria-label="Restaurante" :value="scope" @change="setScope($event.target.value)">
           <option value="">Todos os restaurantes</option>
           <template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id === scope"></option></template>
@@ -102,6 +136,9 @@
       </template>
       <template x-if="!isRestaurant && route.name === 'campanhas' && !route.params.id">
         <a href="#/campanhas/nova" class="btn btn-primary"><span x-html="icon('plus')"></span> Nova campanha</a>
+      </template>
+      <template x-if="canManageAccess && route.name === 'acessos'">
+        <button class="btn btn-primary" @click="newAccess()"><span x-html="icon('plus')"></span> <span x-text="isRestaurant ? 'Convidar pessoa' : 'Novo acesso'"></span></button>
       </template>
       <template x-if="!isRestaurant && route.name === 'pedidos'">
         <button class="btn" @click="openOrderImport()"><span x-html="icon('upload',16)"></span> Importar planilha</button>
@@ -290,6 +327,58 @@
           </article>
         </template>
         <button class="add-card" @click="editRestaurant(null)">+ Cadastrar restaurante</button>
+      </section>
+    </template>
+
+    <!-- ─────────── ACESSOS / EQUIPE ─────────── -->
+    <template x-if="route.name === 'acessos'">
+      <section class="stack" style="grid-template-columns:minmax(0,1fr)">
+        <template x-if="resetRequests.length">
+          <div class="card card-pad stack" style="gap:10px">
+            <h3 style="font-size:16px">Pedidos de nova senha</h3>
+            <p class="small muted" style="margin:0">Estas pessoas usaram “Esqueci minha senha”. Gere o link e mande só para a própria pessoa (pelo WhatsApp, por exemplo).</p>
+            <template x-for="u in resetRequests" :key="u.id">
+              <div class="row-wrap" style="justify-content:space-between;border-top:1px solid var(--line);padding-top:10px">
+                <div><b x-text="u.name"></b> <span class="small muted" x-text="[u.email, !isRestaurant && !scope ? u.restaurant : '', `pediu ${fmt.rel(u.resetRequestedAt)}`].filter(Boolean).join(' · ')"></span></div>
+                <button class="btn btn-dark btn-sm" @click="sendLink(u)">Gerar link</button>
+              </div>
+            </template>
+          </div>
+        </template>
+        <div class="card">
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Nome</th><th>Papel</th><th>Situação</th><th></th></tr></thead>
+              <tbody>
+                <template x-for="u in accessUsers" :key="u.id">
+                  <tr>
+                    <td>
+                      <span x-text="u.name"></span><span class="tiny muted" x-show="u.id === user.userId"> (você)</span>
+                      <div class="tiny muted" x-text="[u.email, !isRestaurant && !scope ? u.restaurant : ''].filter(Boolean).join(' · ')"></div>
+                    </td>
+                    <td x-text="ROLE[u.role] || u.role"></td>
+                    <td>
+                      <span class="status" :class="accessStatus(u).cls" x-text="accessStatus(u).label"></span>
+                      <div class="tiny muted" x-text="u.link && !u.link.expired ? `link vale até ${fmt.dateTime(u.link.expiresAt)}` : (u.lastLoginAt ? `último acesso ${fmt.dateTime(u.lastLoginAt)}` : 'nunca entrou')"></div>
+                    </td>
+                    <td style="text-align:right;white-space:nowrap">
+                      <button class="btn btn-ghost btn-icon btn-sm" x-show="u.id !== user.userId" @click="sendLink(u)" :title="u.status === 'invited' ? 'Gerar link de convite' : 'Gerar link de nova senha'" :aria-label="u.status === 'invited' ? 'Gerar link de convite' : 'Gerar link de nova senha'" x-html="icon('link',15)"></button>
+                      <button class="btn btn-ghost btn-icon btn-sm" title="Editar" aria-label="Editar acesso" @click="editAccess(u)" x-html="icon('edit',15)"></button>
+                      <button class="btn btn-ghost btn-icon btn-sm" x-show="u.id !== user.userId" title="Remover acesso" aria-label="Remover acesso" @click="removeAccess(u)" x-html="icon('trash',15)"></button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <template x-if="!accessUsers.length"><div class="empty">Ninguém tem acesso ainda. Use “<span x-text="isRestaurant ? 'Convidar pessoa' : 'Novo acesso'"></span>” para começar.</div></template>
+          </div>
+        </div>
+        <div class="card card-pad small muted stack" style="gap:6px">
+          <div><b>Gerente</b>: acompanha os pedidos, aprova campanhas, vê os relatórios e cuida dos acessos da equipe do restaurante.</div>
+          <div><b>Equipe</b>: acompanha os pedidos, aprova campanhas e vê os relatórios.</div>
+          <div>Quem recebe um acesso cria a própria senha por um link (vale por 3 dias e funciona uma vez só). O link de nova senha vale por 2 horas. Mande cada link só para a própria pessoa: quem tem o link entra na conta.</div>
+          <div x-show="!isRestaurant">A agência entra com o login definido no arquivo <span class="mono">.env</span> (não aparece nesta lista).</div>
+        </div>
       </section>
     </template>
 
@@ -1077,31 +1166,14 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
         </div>
         <div x-show="restaurantTab==='acesso'" class="stack">
           <label class="check"><input type="checkbox" :checked="restaurantModal.requireApproval !== false" @change="restaurantModal.requireApproval = $event.target.checked"> Campanhas só são enviadas depois de aprovadas pelo restaurante</label>
-          <p class="small muted" style="margin:0">Quem tem acesso entra em <b x-text="`${meta.publicUrl}/app`"></b>, aprova as campanhas e vê os relatórios só deste restaurante. Não vê contatos, outros restaurantes nem configurações.</p>
-          <div class="card">
-            <table class="table">
-              <thead><tr><th>Nome</th><th>E-mail</th><th class="hide-sm">Último acesso</th><th></th></tr></thead>
-              <tbody>
-                <template x-for="u in users" :key="u.id">
-                  <tr>
-                    <td x-text="u.name"></td><td x-text="u.email"></td>
-                    <td class="hide-sm small muted" x-text="u.lastLoginAt ? fmt.dateTime(u.lastLoginAt) : 'nunca entrou'"></td>
-                    <td style="text-align:right;white-space:nowrap"><button class="btn btn-ghost btn-sm" @click="resetPassword(u)">Trocar senha</button><button class="btn btn-ghost btn-icon btn-sm" aria-label="Remover acesso" @click="removeUser(u)" x-html="icon('trash',15)"></button></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-            <template x-if="!users.length"><div class="empty" style="padding:20px">Ninguém do restaurante tem acesso ainda.</div></template>
+          <p class="small muted" style="margin:0">Quem tem acesso entra em <b x-text="`${meta.publicUrl}/app`"></b>, aprova as campanhas e vê os relatórios só deste restaurante. Não vê contatos, outros restaurantes nem configurações. O gerente também convida a própria equipe.</p>
+          <div class="card card-pad stack" style="gap:8px">
+            <template x-if="!restaurantAccess.length"><span class="small muted">Ninguém do restaurante tem acesso ainda.</span></template>
+            <template x-for="u in restaurantAccess" :key="u.id">
+              <div class="row" style="justify-content:space-between"><span><span x-text="u.name"></span> <span class="small muted" x-text="`· ${ROLE[u.role] || u.role}`"></span></span><span class="status" :class="accessStatus(u).cls" x-text="accessStatus(u).label"></span></div>
+            </template>
           </div>
-          <template x-if="!newUser"><button class="btn btn-sm" style="justify-self:start" @click="newUser = { name: '', email: '', password: '' }">Criar acesso</button></template>
-          <template x-if="newUser">
-            <form class="grid-3" style="align-items:end" @submit.prevent="addUser">
-              <div class="field"><label>Nome</label><input class="input" x-model="newUser.name" required></div>
-              <div class="field"><label>E-mail</label><input class="input" type="email" x-model="newUser.email" required></div>
-              <div class="field"><label>Senha inicial</label><input class="input" type="text" minlength="8" x-model="newUser.password" required placeholder="mínimo 8 caracteres"></div>
-              <div class="row" style="grid-column:1/-1"><button class="btn btn-dark btn-sm">Criar</button><button type="button" class="btn btn-ghost btn-sm" @click="newUser = null">Cancelar</button></div>
-            </form>
-          </template>
+          <button class="btn btn-sm" style="justify-self:start" @click="manageAccess(restaurantModal)">Gerenciar acessos</button>
         </div>
         <div x-show="restaurantTab==='cardapio'" class="stack">
           <template x-for="(m, i) in restaurantModal.menu" :key="m.id">
@@ -1433,6 +1505,74 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
       </div>
       <div class="modal-foot"><button type="button" class="btn btn-ghost" @click="passwordModal=null">Cancelar</button><button class="btn btn-dark">Salvar</button></div>
     </form>
+  </div>
+</template>
+
+<template x-if="accessModal">
+  <div class="overlay" @keydown.escape.window="accessModal=null" @click.self="accessModal=null">
+    <form class="modal" role="dialog" aria-modal="true" @submit.prevent="saveAccess">
+      <div class="modal-head">
+        <h2 x-text="accessModal.mode === 'edit' ? 'Editar acesso' : (isRestaurant ? 'Convidar pessoa' : 'Novo acesso')"></h2>
+        <button type="button" class="btn btn-ghost btn-icon" @click="accessModal=null" x-html="icon('x')" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <template x-if="accessModal.mode === 'new' && !isRestaurant">
+          <div class="field"><label>Restaurante</label>
+            <select class="select" x-model="accessModal.restaurantId" @change="accessModal.role = defaultRole(accessModal.restaurantId)" required>
+              <template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id === accessModal.restaurantId"></option></template>
+            </select>
+          </div>
+        </template>
+        <div class="grid-2">
+          <div class="field"><label>Nome</label><input class="input" x-model="accessModal.name" required></div>
+          <div class="field"><label>E-mail</label><input class="input" type="email" x-model="accessModal.email" :disabled="accessModal.mode === 'edit'" required></div>
+        </div>
+        <div class="field" role="radiogroup" aria-label="Papel">
+          <span class="label">Papel</span>
+          <label class="check"><input type="radio" value="manager" x-model="accessModal.role" :disabled="accessModal.self"> <span><b>Gerente</b> · pedidos, campanhas e relatórios, e cuida dos acessos da equipe</span></label>
+          <label class="check"><input type="radio" value="staff" x-model="accessModal.role" :disabled="accessModal.self"> <span><b>Equipe</b> · pedidos, campanhas e relatórios</span></label>
+          <span class="hint" x-show="accessModal.self">Você não pode mudar o próprio papel.</span>
+        </div>
+        <template x-if="accessModal.mode === 'new' && !isRestaurant">
+          <label class="check"><input type="checkbox" x-model="accessModal.setPassword"> Definir a senha agora, em vez de mandar o link de convite</label>
+        </template>
+        <template x-if="accessModal.mode === 'new' && accessModal.setPassword">
+          <div class="field"><label>Senha inicial</label><input class="input" type="text" minlength="8" autocomplete="off" x-model="accessModal.password" required placeholder="mínimo 8 caracteres"></div>
+        </template>
+        <template x-if="accessModal.mode === 'edit' && !isRestaurant">
+          <div class="field"><label>Nova senha (opcional)</label><input class="input" type="text" minlength="8" autocomplete="off" x-model="accessModal.password" placeholder="Em branco: a senha não muda"><span class="hint">Prefira o link de nova senha: assim só a própria pessoa conhece a senha.</span></div>
+        </template>
+        <p class="small muted" style="margin:0" x-show="accessModal.mode === 'new' && !accessModal.setPassword">Ao criar, aparece um link para você mandar à pessoa. Com ele, ela cria a própria senha (vale por 3 dias e funciona uma vez só).</p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-ghost" @click="accessModal=null">Cancelar</button>
+        <button class="btn btn-dark" :disabled="accessModal.busy"><span class="spin" x-show="accessModal.busy"></span> <span x-text="accessModal.mode === 'edit' ? 'Salvar' : (accessModal.setPassword ? 'Criar acesso' : 'Criar e gerar link')"></span></button>
+      </div>
+    </form>
+  </div>
+</template>
+
+<template x-if="linkBox">
+  <div class="overlay" @keydown.escape.window="linkBox=null" @click.self="linkBox=null">
+    <div class="modal" style="width:min(540px,100%)" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 x-text="linkBox.purpose === 'invite' ? 'Link de convite' : 'Link de nova senha'"></h2>
+        <button class="btn btn-ghost btn-icon" @click="linkBox=null" x-html="icon('x')" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0">Mande este link só para <b x-text="linkBox.name"></b> (<span x-text="linkBox.email"></span>). Com ele, a pessoa <span x-text="linkBox.purpose === 'invite' ? 'cria a senha e entra no painel' : 'cria uma senha nova'"></span>.</p>
+        <div class="row">
+          <input class="input mono" readonly :value="linkBox.url" @focus="$event.target.select()" aria-label="Link">
+          <button type="button" class="btn" @click="copyLink" x-html="`${icon('copy',16)} ${linkBox.copied ? 'Copiado' : 'Copiar'}`"></button>
+        </div>
+        <p class="small muted" style="margin:0" x-text="`Vale até ${fmt.dateTime(linkBox.expiresAt)} e funciona uma vez só. Gerar outro link cancela este.`"></p>
+        <p class="note green" style="margin:0" x-show="linkBox.emailed">O link também foi mandado para o e-mail da pessoa.</p>
+      </div>
+      <div class="modal-foot">
+        <a class="btn" :href="linkWhatsApp" target="_blank" rel="noopener">Mandar pelo WhatsApp <span x-html="icon('external',14)"></span></a>
+        <button class="btn btn-dark" @click="linkBox=null">Pronto</button>
+      </div>
+    </div>
   </div>
 </template>
 

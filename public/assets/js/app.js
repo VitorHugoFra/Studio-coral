@@ -44,6 +44,7 @@ const APPROVAL = { pending: 'Aguardando aprovação', approved: 'Aprovada', chan
 const STATUS = { draft: 'Rascunho', scheduled: 'Agendada', sending: 'Enviando', paused: 'Pausada', completed: 'Concluída', canceled: 'Cancelada' };
 const MSG_STATUS = { queued: 'Na fila', sending: 'Enviando', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falhou', skipped: 'Ignorada' };
 const CONN = { disconnected: 'Desconectado', starting: 'Conectando…', qr: 'Aguardando QR Code', connected: 'Conectado', error: 'Erro' };
+const ROLE = { manager: 'Gerente', staff: 'Equipe' };
 const ORDER_STATUS = { new: 'Novo', preparing: 'Em preparo', dispatched: 'Saiu para entrega', completed: 'Concluído', canceled: 'Cancelado' };
 const ORDER_CLASS = { new: 'sending', preparing: 'scheduled', dispatched: 'delivered', completed: 'completed', canceled: 'failed' };
 const ORDER_SOURCE = { site: 'Site', campaign: 'Campanha', import: 'Planilha', referral: 'Indicação' };
@@ -213,12 +214,13 @@ function trendChart(series, hover) {
 // ── Componente principal ───────────────────────────────────
 document.addEventListener('alpine:init', () => {
   Alpine.data('coral', () => ({
-    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, OBJECTIVES, EMOJIS, waFormat, ORDER_STATUS, ORDER_CLASS, ORDER_SOURCE, ORDER_COLUMN_LABELS, MONTH_NAMES, WEEKDAYS,
+    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, ROLE, OBJECTIVES, EMOJIS, waFormat, ORDER_STATUS, ORDER_CLASS, ORDER_SOURCE, ORDER_COLUMN_LABELS, MONTH_NAMES, WEEKDAYS,
     icon: (name, size) => window.icon(name, size),
 
     booted: false,
     user: null,
     login: { email: '', password: '', loading: false, error: '' },
+    forgot: null,
     route: { name: 'painel', params: {} },
     navOpen: false,
 
@@ -261,8 +263,10 @@ document.addEventListener('alpine:init', () => {
     detailFilter: { status: '', search: '' },
 
     outbox: [],
-    users: [],
-    newUser: null,
+    accessUsers: [],
+    accessModal: null,
+    linkBox: null,
+    restaurantAccess: [],
     reportState: { restaurantId: '', month: '', months: [] },
     approvalNote: '',
     passwordModal: null,
@@ -308,6 +312,26 @@ document.addEventListener('alpine:init', () => {
     },
 
     get isRestaurant() { return this.user?.role === 'restaurant'; },
+    /** Gerente do restaurante: além do restaurante, cuida dos acessos da equipe. */
+    get isManager() { return this.isRestaurant && this.user?.teamRole === 'manager'; },
+    get canManageAccess() { return !this.isRestaurant || this.isManager; },
+
+    // ── Esqueci minha senha ────────────────────────────────
+    startForgot() {
+      this.forgot = { email: this.login.email, loading: false, error: '', delivery: null };
+    },
+    async sendForgot() {
+      const f = this.forgot;
+      f.loading = true;
+      f.error = '';
+      try {
+        f.delivery = (await api('/auth/forgot', { method: 'POST', body: { email: f.email } })).delivery;
+      } catch (err) {
+        f.error = err.message;
+      } finally {
+        f.loading = false;
+      }
+    },
 
     async afterLogin() {
       const [meta, restaurants, settings] = await Promise.all([api('/meta'), api('/restaurants'), api('/settings')]);
@@ -374,6 +398,15 @@ document.addEventListener('alpine:init', () => {
         if (!this.isRestaurant && st === 'changes') this.toast(`O restaurante pediu ajustes em “${d.name}”: ${d.approval.note}`, 'Ajustes pedidos');
         this.softRefresh();
       });
+      es.addEventListener('access:request', (e) => {
+        if (!this.canManageAccess) return;
+        const d = JSON.parse(e.data);
+        this.toast(`${d.name} pediu uma nova senha. Gere o link em ${this.isRestaurant ? 'Equipe' : 'Acessos'} e mande para a pessoa.`, 'Pedido de nova senha');
+        if (this.route.name === 'acessos') this.softRefresh();
+      });
+      es.addEventListener('access:update', () => {
+        if (this.route.name === 'acessos') this.softRefresh();
+      });
       es.addEventListener('incoming', (e) => {
         const d = JSON.parse(e.data);
         const who = d.contacts?.[0] || fmt.phone(d.from);
@@ -413,7 +446,7 @@ document.addEventListener('alpine:init', () => {
     async onRoute() {
       const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
       let [name = 'painel', id, action] = parts;
-      const RESTAURANT_PAGES = ['painel', 'pedidos', 'campanhas', 'relatorios'];
+      const RESTAURANT_PAGES = ['painel', 'pedidos', 'campanhas', 'relatorios', ...(this.isManager ? ['acessos'] : [])];
       if (this.isRestaurant && (!RESTAURANT_PAGES.includes(name) || id === 'nova' || action === 'editar')) {
         name = 'painel'; id = undefined; action = undefined;
         history.replaceState(null, '', '#/painel');
@@ -435,6 +468,7 @@ document.addEventListener('alpine:init', () => {
         if (name === 'restaurantes') this.restaurants = await api('/restaurants');
         if (name === 'contatos') { if (params.id) await this.loadContactProfile(params.id); else await this.loadContacts(); }
         if (name === 'pedidos') await this.loadOrders();
+        if (name === 'acessos') await this.loadAccess();
         if (name === 'campanhas') {
           if (!params.id) await this.loadCampaigns();
           else if (params.id === 'nova') { if (!silent) await this.newCampaign(); }
@@ -518,8 +552,17 @@ document.addEventListener('alpine:init', () => {
 
     editRestaurant(r) {
       this.restaurantTab = 'diagnostico';
-      this.loadUsers(r?.id).catch(() => {});
+      this.restaurantAccess = [];
+      if (r?.id) api(`/users?restaurantId=${r.id}`).then((list) => { this.restaurantAccess = list; }).catch(() => {});
       this.restaurantModal = JSON.parse(JSON.stringify(r || this.blankRestaurant()));
+    },
+
+    /** Da ficha do restaurante para a tela de acessos, já filtrada nele. */
+    manageAccess(r) {
+      this.restaurantModal = null;
+      this.scope = r.id;
+      localStorage.setItem('sc_scope', r.id);
+      this.go('#/acessos');
     },
 
     addMenuItem() {
@@ -1269,32 +1312,83 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
-    // ── Acessos do restaurante ─────────────────────────────
-    async loadUsers(restaurantId) {
-      this.users = restaurantId ? await api(`/restaurants/${restaurantId}/users`) : [];
-      this.newUser = null;
+    // ── Acessos (agência: todos; gerente: a própria equipe) ─
+    async loadAccess() {
+      this.accessUsers = await api(`/users${!this.isRestaurant && this.scope ? `?restaurantId=${this.scope}` : ''}`);
     },
-    async addUser() {
-      const u = this.newUser;
+    get resetRequests() {
+      return this.accessUsers.filter((u) => u.resetRequestedAt);
+    },
+    accessStatus(u) {
+      if (u.status === 'invited') return u.link && !u.link.expired ? { label: 'Convite pendente', cls: 'scheduled' } : { label: 'Convite vencido', cls: 'failed' };
+      if (u.status === 'reset-requested') return { label: 'Pediu nova senha', cls: 'sending' };
+      return { label: 'Ativo', cls: 'completed' };
+    },
+    /** Papel sugerido: o primeiro acesso do restaurante é o gerente; os seguintes, equipe. */
+    defaultRole(restaurantId) {
+      return this.accessUsers.some((u) => u.restaurantId === restaurantId && u.role === 'manager') ? 'staff' : 'manager';
+    },
+    newAccess() {
+      const restaurantId = this.isRestaurant ? this.user.restaurantId : (this.scope || this.restaurants[0]?.id || '');
+      this.accessModal = { mode: 'new', restaurantId, name: '', email: '', role: this.defaultRole(restaurantId), setPassword: false, password: '', busy: false };
+    },
+    editAccess(u) {
+      this.accessModal = { mode: 'edit', id: u.id, restaurantId: u.restaurantId, name: u.name, email: u.email, role: u.role, self: u.id === this.user.userId, password: '', busy: false };
+    },
+    async saveAccess() {
+      const m = this.accessModal;
+      m.busy = true;
       try {
-        await api(`/restaurants/${this.restaurantModal.id}/users`, { method: 'POST', body: u });
-        this.toast(`Acesso criado para ${u.email}. Passe a senha para o restaurante.`);
-        await this.loadUsers(this.restaurantModal.id);
+        if (m.mode === 'new') {
+          const body = { restaurantId: m.restaurantId, name: m.name, email: m.email, role: m.role, ...(m.setPassword ? { password: m.password } : {}) };
+          const created = await api('/users', { method: 'POST', body });
+          this.accessModal = null;
+          if (created.link) this.showLink(created, created.link);
+          else this.toast(`Acesso criado para ${created.email}. Passe a senha só para a própria pessoa.`);
+        } else {
+          await api(`/users/${m.id}`, { method: 'PUT', body: { name: m.name, role: m.role } });
+          if (m.password) await api(`/users/${m.id}/password`, { method: 'PUT', body: { password: m.password } });
+          this.accessModal = null;
+          this.toast(m.password ? 'Acesso e senha atualizados.' : 'Acesso atualizado.');
+        }
+        await this.loadAccess();
+      } catch (err) {
+        this.error(err);
+        m.busy = false;
+      }
+    },
+    async sendLink(u) {
+      try {
+        this.showLink(u, await api(`/users/${u.id}/link`, { method: 'POST' }));
+        await this.loadAccess();
       } catch (err) { this.error(err); }
     },
-    async resetPassword(u) {
-      const password = prompt(`Nova senha para ${u.email} (mínimo 8 caracteres):`);
-      if (!password) return;
-      try {
-        await api(`/users/${u.id}/password`, { method: 'PUT', body: { password } });
-        this.toast('Senha alterada.');
-      } catch (err) { this.error(err); }
+    showLink(u, link) {
+      this.linkBox = { name: u.name, email: u.email, ...link, copied: false };
     },
-    removeUser(u) {
-      this.confirm(`Remover o acesso de ${u.email}?`, 'A pessoa deixa de entrar no painel na hora.', async () => {
+    /** Mensagem pronta para o WhatsApp, com o link. */
+    get linkWhatsApp() {
+      const b = this.linkBox;
+      if (!b) return '';
+      const hello = b.name && !b.name.includes('@') ? `Olá, ${b.name.split(/\s+/)[0]}!` : 'Olá!';
+      const text = b.purpose === 'invite'
+        ? `${hello} Este é o seu acesso ao painel da Studio Coral. Crie a sua senha neste link (vale por 3 dias e funciona uma vez só): ${b.url}`
+        : `${hello} Crie a sua nova senha do painel da Studio Coral neste link (vale por 2 horas e funciona uma vez só): ${b.url}`;
+      return `https://wa.me/?text=${encodeURIComponent(text)}`;
+    },
+    async copyLink() {
+      try {
+        await navigator.clipboard.writeText(this.linkBox.url);
+        this.linkBox.copied = true;
+      } catch {
+        this.error(new Error('Não foi possível copiar sozinho. Clique no link, copie e cole.'));
+      }
+    },
+    removeAccess(u) {
+      this.confirm(`Remover o acesso de ${u.name}?`, 'A pessoa deixa de entrar no painel na hora, e os links que ela tiver param de valer.', async () => {
         await api(`/users/${u.id}`, { method: 'DELETE' });
-        await this.loadUsers(this.restaurantModal.id);
-      });
+        await this.loadAccess();
+      }, 'Remover');
     },
     async changeOwnPassword() {
       const m = this.passwordModal;
@@ -1302,7 +1396,7 @@ document.addEventListener('alpine:init', () => {
       try {
         await api('/me/password', { method: 'PUT', body: { current: m.current, password: m.password } });
         this.passwordModal = null;
-        this.toast('Senha alterada.');
+        this.toast('Se você estava com o painel aberto em outro aparelho, lá será preciso entrar de novo.', 'Senha alterada');
       } catch (err) { this.error(err); }
     },
 

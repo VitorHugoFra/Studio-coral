@@ -49,7 +49,7 @@ describe('repositórios: restaurantes, acessos e configurações', () => {
 
   it('acessos: e-mail único, lista por restaurante e exclusão em cascata', async () => {
     const r = await repos.restaurants.create({ name: 'Bistrô', slug: 'bistro' });
-    const u = await repos.users.create({ restaurantId: r.id, role: 'restaurant', name: 'Bia', email: 'bia@bistro.com.br', passwordHash: 'scrypt:x:y' });
+    const u = await repos.users.create({ restaurantId: r.id, role: 'manager', name: 'Bia', email: 'bia@bistro.com.br', passwordHash: 'scrypt:x:y' });
     assert.equal((await repos.users.byEmail('bia@bistro.com.br')).id, u.id);
     assert.deepEqual((await repos.users.listByRestaurant(r.id)).map((x) => x.email), ['bia@bistro.com.br']);
     assert.deepEqual(await repos.users.listByRestaurant('nao-e-uuid'), []);

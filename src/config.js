@@ -25,6 +25,11 @@ module.exports = {
   },
   sessionSecret: env('SESSION_SECRET', 'studio-coral-dev-secret'),
 
+  // E-mail dos convites e do "esqueci minha senha" (src/mail). 'none': os links aparecem na tela de acessos
+  mail: {
+    provider: env('MAIL_PROVIDER', 'none'),
+  },
+
   // Intervalo entre envios no simulador, em segundos (os testes usam zero)
   simulatorPace: { min: 0.8, max: 2.2 },
 

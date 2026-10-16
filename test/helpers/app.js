@@ -4,6 +4,7 @@ const path = require('path');
 const baseConfig = require('../../src/config');
 const { createApp } = require('../../src/app');
 const { SimulatorProvider } = require('../../src/messaging/providers/SimulatorProvider');
+const { MailProvider, MailError } = require('../../src/mail/MailProvider');
 const { startPgServer } = require('./pg-server');
 
 /** Logger dos testes: só mostra avisos e erros. */
@@ -65,13 +66,27 @@ const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 /** Telefone válido e único por índice: 5531999000001, 5531999000002… */
 const phone = (i) => `5531999${String(i).padStart(6, '0')}`;
 
+/** Serviço de e-mail falso: guarda o que "enviou" em `sent`; com `fail` ligado (pode mudar no meio do teste), recusa o envio. */
+function fakeMail({ fail = false } = {}) {
+  class FakeMailProvider extends MailProvider {
+    static key = 'teste';
+    get delivers() { return true; }
+    async send(message) {
+      if (this.fail) throw new MailError('servidor de e-mail fora do ar');
+      this.sent.push(message);
+    }
+  }
+  return Object.assign(new FakeMailProvider(), { sent: [], fail });
+}
+
 /**
  * Sobe o app numa porta livre, com pasta de dados temporária e simulador rápido.
- * `legacyJson` grava um antigo db.json na pasta de dados; `logger` troca o logger silencioso (para conferir o que a subida registra).
+ * `legacyJson` grava um antigo db.json na pasta de dados; `logger` troca o logger silencioso (para conferir o que a subida registra);
+ * `mail` troca o "sem e-mail" padrão por um serviço de e-mail (ver fakeMail).
  * O banco é o PGlite em memória; com TEST_PG=1 é um PostgreSQL local (PGlite numa porta TCP) acessado pelo driver `pg`, como em produção.
  * Devolve o cliente da agência já logado e um close() que desliga e apaga tudo.
  */
-async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null, logger = QUIET } = {}) {
+async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null, logger = QUIET, mail = null } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
   if (legacyJson) fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify(legacyJson));
   const config = {
@@ -92,6 +107,7 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
   };
   const overrides = {
     'messaging.factories': () => ({ simulator: () => new SimulatorProvider(simulator) }),
+    ...(mail ? { mail: () => mail } : {}),
   };
   let instance = null;
   let pg = null;
@@ -144,4 +160,4 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
   }
 }
 
-module.exports = { startApp, createClient, waitFor, sleep, phone, ADMIN };
+module.exports = { startApp, createClient, waitFor, sleep, phone, fakeMail, ADMIN };

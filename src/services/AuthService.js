@@ -7,8 +7,12 @@ const TTL = 1000 * 60 * 60 * 12; // 12h
  * Autenticação por cookie assinado (HMAC).
  *
  *  • Agência: um administrador definido no .env (acesso total).
- *  • Restaurante: usuários cadastrados pela agência, presos ao próprio
- *    restaurante. Aprovam campanhas e veem apenas os próprios relatórios.
+ *  • Restaurante: usuários presos ao próprio restaurante. Aprovam campanhas e
+ *    veem apenas os próprios relatórios. O papel no restaurante (teamRole) é
+ *    'manager' (gerente: também cuida dos acessos da equipe) ou 'staff' (equipe).
+ *
+ * A sessão leva a hora em que foi emitida (iat): trocar ou redefinir a senha
+ * (users.password_changed_at) encerra as sessões anteriores daquela pessoa.
  */
 class AuthService {
   constructor({ config, repos }) {
@@ -64,7 +68,13 @@ class AuthService {
 
   /** Token de sessão para um usuário já identificado (usado também na geração do PDF). */
   tokenFor(user) {
-    return this.sign({ ...user, exp: Date.now() + TTL });
+    const now = Date.now();
+    return this.sign({ ...user, iat: now, exp: now + TTL });
+  }
+
+  /** Sessão emitida antes da última troca de senha da pessoa (sessão sem iat é de antes desta regra). */
+  static revoked(session, user) {
+    return !!user.passwordChangedAt && (session.iat || 0) < Date.parse(user.passwordChangedAt);
   }
 
   async login(email, password) {
@@ -77,7 +87,7 @@ class AuthService {
     const restaurant = await this.repos.restaurants.get(user.restaurantId);
     if (!restaurant) return null;
     await this.repos.users.update(user, { lastLoginAt: new Date().toISOString() });
-    return this.tokenFor({ role: 'restaurant', userId: user.id, restaurantId: user.restaurantId, email: user.email, name: user.name, restaurant: restaurant.name });
+    return this.tokenFor({ role: 'restaurant', teamRole: user.role, userId: user.id, restaurantId: user.restaurantId, email: user.email, name: user.name, restaurant: restaurant.name });
   }
 
   readCookie(req) {
@@ -103,10 +113,11 @@ class AuthService {
         req.user = user;
         return next();
       }
-      // Usuário de restaurante removido perde o acesso na hora
+      // Usuário de restaurante removido (ou com a senha trocada depois desta sessão) perde o acesso na hora,
+      // e o papel no restaurante vale como está no banco, não como estava no login
       return this.repos.users.get(user.userId).then((found) => {
-        if (!found) return expired();
-        req.user = user;
+        if (!found || AuthService.revoked(user, found)) return expired();
+        req.user = { ...user, teamRole: found.role };
         return next();
       }, next);
     };

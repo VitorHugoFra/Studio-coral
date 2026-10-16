@@ -82,10 +82,14 @@ const IMAGES = {
 };
 const BANNERS = { 'cantina-bella-nonna': ['nonna-banner-1', 'nonna-banner-2'], 'sabor-de-minas': ['minas-banner-1', 'minas-banner-2'] };
 
-// Acessos de demonstração dos restaurantes (senha mínima de 8 caracteres)
+// Acessos de demonstração dos restaurantes (senha mínima de 8 caracteres): gerentes, que cuidam da equipe…
 const RESTAURANT_USERS = {
   'cantina-bella-nonna': { name: 'Giulia Rossi', email: 'giulia@bellanonna.com.br', password: 'bellanonna' },
   'sabor-de-minas': { name: 'Seu Geraldo', email: 'geraldo@sabordeminas.com.br', password: 'sabordeminas' },
+};
+// …e alguém da equipe, que aprova campanhas e vê relatórios, mas não cuida dos acessos
+const TEAM_USERS = {
+  'cantina-bella-nonna': { name: 'Marco Bianchi', email: 'marco@bellanonna.com.br', password: 'marco-nonna' },
 };
 
 const TAG_POOL = [['vip'], ['inativo'], ['familia'], ['casal'], ['almoco'], ['fim-de-semana'], ['aniversariante'], []];
@@ -224,7 +228,11 @@ async function seed(repos, { reset = false } = {}) {
       });
       const login = RESTAURANT_USERS[data.slug];
       if (login) {
-        await r.users.create({ restaurantId: restaurant.id, role: 'restaurant', name: login.name, email: login.email, passwordHash: AuthService.hashPassword(login.password) });
+        await r.users.create({ restaurantId: restaurant.id, role: 'manager', name: login.name, email: login.email, passwordHash: AuthService.hashPassword(login.password) });
+      }
+      const team = TEAM_USERS[data.slug];
+      if (team) {
+        await r.users.create({ restaurantId: restaurant.id, role: 'staff', name: team.name, email: team.email, passwordHash: AuthService.hashPassword(team.password) });
       }
 
       // Contatos fictícios

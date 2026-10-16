@@ -1,5 +1,6 @@
 const { RestaurantsRepo } = require('./restaurants');
 const { UsersRepo } = require('./users');
+const { PasswordTokensRepo } = require('./passwordTokens');
 const { SettingsRepo, DEFAULT_SETTINGS } = require('./settings');
 const { ContactsRepo } = require('./contacts');
 const { CampaignsRepo } = require('./campaigns');
@@ -28,6 +29,7 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     settings,
     restaurants: new RestaurantsRepo(db),
     users: new UsersRepo(db),
+    passwordTokens: new PasswordTokensRepo(db),
     contacts: new ContactsRepo(db),
     campaigns: new CampaignsRepo(db),
     messages: new MessagesRepo(db),

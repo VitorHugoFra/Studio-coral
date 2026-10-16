@@ -16,8 +16,9 @@ Protótipo funcional do serviço de **disparo de mensagens de marketing personal
 | Perfil | E-mail | Senha |
 |---|---|---|
 | Agência (definido no `.env`) | `admin@studiocoral.com.br` | `coral123` |
-| Restaurante · Cantina Bella Nonna | `giulia@bellanonna.com.br` | `bellanonna` |
-| Restaurante · Sabor de Minas | `geraldo@sabordeminas.com.br` | `sabordeminas` |
+| Gerente · Cantina Bella Nonna | `giulia@bellanonna.com.br` | `bellanonna` |
+| Equipe · Cantina Bella Nonna | `marco@bellanonna.com.br` | `marco-nonna` |
+| Gerente · Sabor de Minas | `geraldo@sabordeminas.com.br` | `sabordeminas` |
 
 ![Página inicial](docs/prints/01-site-inicio.png)
 
@@ -75,13 +76,31 @@ Roda a bateria completa com o PostgreSQL embutido e repete os testes HTTP pelo d
 
 LGPD: a importação exige confirmar o consentimento. Quem responde **SAIR** é descadastrado automaticamente e recebe uma confirmação.
 
-## Acesso do restaurante e aprovação
+## Acessos ao painel
 
-A agência cria o acesso em **Restaurantes → Editar diagnóstico → Acesso do restaurante**. Quem entra com esse acesso:
+Há três tipos de acesso:
 
-- vê o painel e os relatórios **só do próprio restaurante**;
-- aprova campanhas ou pede ajustes (com comentário), vendo a mensagem como o cliente vai receber;
-- não vê contatos, outros restaurantes, conexão nem configurações (bloqueado também na API).
+| Quem | Entra com | O que faz |
+|---|---|---|
+| **Agência** | O login do `.env` (`ADMIN_EMAIL` e `ADMIN_PASSWORD`) | Tudo, em todos os restaurantes. A senha só muda no `.env` |
+| **Gerente** do restaurante | Acesso criado pela agência ou por outro gerente | Painel, pedidos, aprovação de campanhas e relatórios **só do próprio restaurante**, e a tela **Equipe**, onde convida e remove pessoas, muda papéis e gera links de senha |
+| **Equipe** do restaurante | Acesso criado pela agência ou pelo gerente | O mesmo que o gerente, menos a tela Equipe |
+
+Gerente e equipe não veem contatos, outros restaurantes, conexão nem configurações (bloqueado também na API).
+
+**Criar um acesso.** A agência usa **Acessos → Novo acesso** (ou **Restaurantes → Editar diagnóstico → Acesso do restaurante → Gerenciar acessos**); o gerente usa **Equipe → Convidar pessoa**. O acesso nasce sem senha e aparece um **link de convite** (`/senha#…`), com os botões **Copiar** e **Mandar pelo WhatsApp**. Com ele, a própria pessoa cria a senha. O link vale por 3 dias e funciona uma vez só; gerar outro cancela o anterior. A agência ainda pode marcar "Definir a senha agora" e passar a senha, como antes.
+
+**Esqueci minha senha.** Na tela de entrada, a pessoa informa o e-mail. A resposta é a mesma exista ou não o acesso (não revela quem tem acesso). Sem serviço de e-mail configurado, o pedido aparece no alto da tela **Acessos** (agência) e **Equipe** (gerente daquele restaurante), com aviso em tempo real: clique em **Gerar link** e mande o link para a pessoa. O link de nova senha vale por 2 horas e funciona uma vez só. Um link novo também pode ser gerado a qualquer momento pelo ícone de link na lista.
+
+**Trocar a senha.** Gerente e equipe trocam a própria senha pelo botão **Senha**, no rodapé do menu. Trocar ou redefinir a senha encerra as outras sessões abertas daquela pessoa; mudar o papel ou remover o acesso vale na hora, sem esperar a sessão vencer.
+
+**Segurança dos links.** O token vai depois do `#`, então não aparece nos logs do servidor; no banco fica só o hash (tabela `password_tokens`). Mande cada link só para a própria pessoa: quem tem o link cria a senha.
+
+**E-mail.** O envio passa pelo contrato `MailProvider` (`src/mail`), como a mensageria. O padrão é `MAIL_PROVIDER=none` (links na tela). Para ligar um serviço de e-mail (SMTP, SES, Resend…), crie uma classe que estenda `MailProvider`, registre a factory em `src/mail/index.js` e mude `MAIL_PROVIDER`. Com e-mail, o "Esqueci minha senha" manda o link direto para a pessoa (no máximo um a cada 5 minutos), e os convites e links gerados na tela também vão por e-mail; se o envio falhar, o pedido cai na tela de acessos e a falha vai para o log.
+
+Detalhes no [documento de desenho](docs/superpowers/specs/2026-10-16-criacao-de-contas-design.md).
+
+## Aprovação de campanhas pelo restaurante
 
 Fluxo: a agência monta a campanha e clica em **Enviar para aprovação** (passo Envio). O envio fica bloqueado até o restaurante aprovar. Se a agência mudar texto, imagem, cupom, link ou público depois da aprovação, ela é zerada e precisa ser pedida de novo. Tudo fica registrado no histórico da campanha. A exigência pode ser desligada por restaurante.
 
