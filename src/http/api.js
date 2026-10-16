@@ -2,7 +2,6 @@ const express = require('express');
 const { TemplateService } = require('../services/TemplateService');
 const { MessagingProvider } = require('../messaging/MessagingProvider');
 const { CAMPAIGN_IDEAS } = require('../ideas');
-const { AuthService } = require('../services/AuthService');
 const { ReportService } = require('../services/ReportService');
 
 const slugify = (s) => String(s || '')
@@ -36,6 +35,7 @@ function createApi(container) {
   const reports = container.resolve('reports');
   const pdf = container.resolve('pdf');
   const logger = container.resolve('logger');
+  const access = container.resolve('access');
 
   const router = express.Router();
   // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos.
@@ -59,6 +59,13 @@ function createApi(container) {
   }));
   router.post('/auth/logout', (req, res) => { auth.clearCookie(res); res.json({ ok: true }); });
 
+  // "Esqueci minha senha" e a página do link (/senha#token). O token vai no corpo, nunca na URL
+  router.post('/auth/forgot', wrap(async (req, res) => res.json({ ok: true, ...(await access.requestReset(req.body?.email)) })));
+  router.post('/auth/link', wrap(async (req, res) => res.json(await access.inspectLink(req.body?.token))));
+  router.post('/auth/link/password', wrap(async (req, res) => {
+    res.json({ ok: true, ...(await access.redeemLink(req.body?.token, req.body?.password)) });
+  }));
+
   router.use(auth.middleware());
 
   /*
@@ -70,6 +77,11 @@ function createApi(container) {
     ['GET', /^\/campaigns\/[^/]+(\/messages)?$/],
     ['POST', /^\/campaigns\/[^/]+\/(approve|request-changes)$/],
     ['PUT', /^\/me\/password$/],
+    // Acessos da equipe: o AccessService deixa só o gerente, e só no próprio restaurante
+    ['GET', /^\/users$/],
+    ['POST', /^\/users(\/[^/]+\/link)?$/],
+    ['PUT', /^\/users\/[^/]+$/],
+    ['DELETE', /^\/users\/[^/]+$/],
   ];
   router.use((req, res, next) => {
     if (req.user.role !== 'restaurant') return next();
@@ -87,11 +99,9 @@ function createApi(container) {
   router.get('/auth/me', (req, res) => res.json({ user: req.user }));
 
   router.put('/me/password', wrap(async (req, res) => {
-    if (!isRestaurant(req)) throw new Error('A senha da agência é definida no arquivo .env.');
-    const user = await repos.users.get(req.user.userId);
-    if (!AuthService.checkPassword(req.body?.current || '', user.passwordHash)) throw new Error('Senha atual incorreta.');
-    AuthService.validatePassword(req.body?.password);
-    await repos.users.update(user, { passwordHash: AuthService.hashPassword(req.body.password) });
+    await access.changeOwnPassword(req.user, req.body || {});
+    // As outras sessões da pessoa caem (são de antes da troca); esta continua, com uma sessão nova
+    auth.setCookie(res, auth.tokenFor(req.user));
     res.json({ ok: true });
   }));
 
@@ -123,38 +133,23 @@ function createApi(container) {
     res.json(await withCounts(list.sort((a, b) => a.name.localeCompare(b.name))));
   }));
 
-  // ── Acessos dos restaurantes (gerenciados pela agência) ────
-  const publicUser = ({ passwordHash, ...u }) => u;
-
-  router.get('/restaurants/:id/users', wrap(async (req, res) => {
-    res.json((await repos.users.listByRestaurant(req.params.id)).map(publicUser));
-  }));
-
-  router.post('/restaurants/:id/users', wrap(async (req, res) => {
-    if (!(await repos.restaurants.get(req.params.id))) throw new Error('Restaurante não encontrado.');
-    const email = String(req.body?.email || '').trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Informe um e-mail válido.');
-    if (email === config.admin.email.toLowerCase() || (await repos.users.byEmail(email))) throw new Error('Este e-mail já tem acesso.');
-    AuthService.validatePassword(req.body?.password);
-    const user = await repos.users.create({
-      restaurantId: req.params.id,
-      name: String(req.body?.name || '').trim() || email,
-      email,
-      role: 'restaurant',
-      passwordHash: AuthService.hashPassword(req.body.password),
-    });
-    res.status(201).json(publicUser(user));
-  }));
-
+  // ── Acessos (agência: todos os restaurantes; gerente: a própria equipe) ─
+  // As regras (quem pode o quê, convite e links) ficam no AccessService
+  router.get('/users', wrap(async (req, res) => res.json(await access.list(req.user, { restaurantId: req.query.restaurantId }))));
+  router.post('/users', wrap(async (req, res) => res.status(201).json(await access.create(req.user, req.body || {}))));
+  router.put('/users/:id', wrap(async (req, res) => res.json(await access.update(req.user, req.params.id, req.body || {}))));
+  router.post('/users/:id/link', wrap(async (req, res) => res.json(await access.issueLink(req.user, req.params.id))));
   router.put('/users/:id/password', wrap(async (req, res) => {
-    const user = await repos.users.get(req.params.id);
-    if (!user) throw notFound('Usuário não encontrado.');
-    AuthService.validatePassword(req.body?.password);
-    await repos.users.update(user, { passwordHash: AuthService.hashPassword(req.body.password) });
+    await access.setPassword(req.user, req.params.id, req.body?.password);
     res.json({ ok: true });
   }));
+  router.delete('/users/:id', wrap(async (req, res) => res.json({ ok: await access.remove(req.user, req.params.id) })));
 
-  router.delete('/users/:id', wrap(async (req, res) => res.json({ ok: await repos.users.remove(req.params.id) })));
+  // Os acessos de um restaurante, pelo endereço antigo (só a agência; mesma regra de /users)
+  router.get('/restaurants/:id/users', wrap(async (req, res) => res.json(await access.list(req.user, { restaurantId: req.params.id }))));
+  router.post('/restaurants/:id/users', wrap(async (req, res) => {
+    res.status(201).json(await access.create(req.user, { ...req.body, restaurantId: req.params.id }));
+  }));
 
   router.get('/restaurants/:id', wrap(async (req, res) => {
     const r = await repos.restaurants.get(req.params.id);

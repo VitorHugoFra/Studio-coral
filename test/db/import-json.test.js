@@ -51,6 +51,7 @@ describe('importação do antigo db.json', () => {
     assert.deepEqual(r.menu, [{ id: 'm1', name: 'Lasanha', price: 62.9 }]);
     const u = await repos.users.get(ID.user);
     assert.ok(AuthService.checkPassword('senha-giulia-123', u.passwordHash));
+    assert.equal(u.role, 'manager', "o papel antigo 'restaurant' vira gerente, como na migração 004");
     assert.equal((await repos.conversions.get(ID.v1)).value, 77.4);
     assert.equal((await db.one('SELECT phone_key FROM contacts WHERE id = $1', [ID.ana])).phone_key, '3199000001');
     await repos.settings.load();

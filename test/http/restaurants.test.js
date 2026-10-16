@@ -90,7 +90,7 @@ describe('restaurantes e acessos', () => {
     assert.equal(ok.status, 201);
     assert.equal(ok.data.email, 'kai@sushi.com.br');
     assert.equal(ok.data.name, 'kai@sushi.com.br');
-    assert.equal(ok.data.role, 'restaurant');
+    assert.equal(ok.data.role, 'staff'); // sem papel informado, o menor acesso
     assert.equal(ok.data.restaurantId, r.id);
     assert.equal(ok.data.passwordHash, undefined);
     assert.equal((await ctx.agency.post(url, { email: 'kai@sushi.com.br', password: 'senha-boa-123' })).data.error, 'Este e-mail já tem acesso.');

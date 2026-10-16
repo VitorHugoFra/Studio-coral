@@ -58,9 +58,12 @@ async function importJson(db, data) {
     const restaurantIds = await idsOf('restaurants');
     const ofKnownRestaurant = ({ rows, stat }) => rows.filter((row) => restaurantIds.has(row.restaurantId) || (stat.ignored += 1, false));
 
+    // Acessos: o papel antigo 'restaurant' é o gerente de hoje (como na migração 004)
+    const legacyRole = (row) => (row.role === 'restaurant' ? { ...row, role: 'manager' } : row);
     for (const name of ['users', 'contacts', 'campaigns']) {
       const part = prepare(name);
-      await insert(name, ofKnownRestaurant(part), part.stat);
+      const rows = ofKnownRestaurant(part);
+      await insert(name, name === 'users' ? rows.map(legacyRole) : rows, part.stat);
     }
     const contactIds = await idsOf('contacts');
     const campaignIds = await idsOf('campaigns');

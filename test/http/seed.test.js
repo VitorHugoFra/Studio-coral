@@ -20,6 +20,9 @@ describe('dados de demonstração', () => {
     const login = await giulia.login('giulia@bellanonna.com.br', 'bellanonna');
     assert.equal(login.status, 200);
     assert.equal(login.data.user.restaurant, 'Cantina Bella Nonna');
+    assert.equal(login.data.user.teamRole, 'manager');
+    const marco = await ctx.client().login('marco@bellanonna.com.br', 'marco-nonna');
+    assert.equal(marco.data.user.teamRole, 'staff', 'alguém da equipe, para a tela Equipe não abrir só com a gerente');
     const campaigns = (await giulia.get('/api/campaigns')).data;
     assert.equal(campaigns.find((c) => c.name === 'Clientes VIP · Menu Degustação').approval.status, 'pending');
     assert.equal(campaigns.filter((c) => c.status === 'completed').length, 3);

@@ -14,7 +14,8 @@ describe('migrações', () => {
       assert.deepEqual((await migrate(db)).slice(0, 2), ['001_esquema_inicial', '002_indices_chaves_estrangeiras']);
       assert.deepEqual(await migrate(db), []);
       const tables = (await db.many("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")).map((t) => t.table_name);
-      assert.deepEqual(tables, ['campaigns', 'contacts', 'conversions', 'messages', 'restaurants', 'schema_migrations', 'settings', 'users']);
+      // A criação de contas (004_acessos) acrescentou os links de convite e de nova senha
+      assert.deepEqual(tables, ['campaigns', 'contacts', 'conversions', 'messages', 'password_tokens', 'restaurants', 'schema_migrations', 'settings', 'users']);
       assert.deepEqual(await db.one('SELECT id, data FROM settings'), { id: 1, data: {} });
       // Sem estes índices, excluir um contato ou uma mensagem varre a tabela filha inteira
       const indexes = (await db.many("SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('messages_contact', 'conversions_message', 'conversions_contact') ORDER BY indexname")).map((i) => i.indexname);
