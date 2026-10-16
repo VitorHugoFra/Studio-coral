@@ -6,6 +6,7 @@ const { AuthService } = require('../services/AuthService');
 const { ReportService } = require('../services/ReportService');
 const input = require('../services/orderInput');
 const audienceFilters = require('../services/audienceFilters');
+const { ReferralService } = require('../services/ReferralService');
 
 const slugify = (s) => String(s || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -21,7 +22,7 @@ const stable = (value) => JSON.stringify(value, (_key, v) => (v && typeof v === 
   ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
   : v));
 
-const RESTAURANT_FIELDS = ['name', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'menu', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'requireApproval', 'banners', 'logoUrl'];
+const RESTAURANT_FIELDS = ['name', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'menu', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'requireApproval', 'banners', 'logoUrl', 'referral'];
 const CAMPAIGN_FIELDS = ['name', 'restaurantId', 'objective', 'occasion', 'message', 'mediaUrl', 'destinationUrl', 'coupon', 'segment', 'includeFooter', 'cloudTemplate', 'notes'];
 
 /** Rotas autenticadas do painel (/api/*). */
@@ -39,6 +40,7 @@ function createApi(container) {
   const pdf = container.resolve('pdf');
   const logger = container.resolve('logger');
   const orderService = container.resolve('orders');
+  const referralService = container.resolve('referrals');
 
   const router = express.Router();
   // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos.
@@ -69,7 +71,7 @@ function createApi(container) {
    * ficam sempre presos ao restaurante do usuário (ver scopeOf e ownCampaign).
    */
   const RESTAURANT_ROUTES = [
-    ['GET', /^\/(auth\/me|events|dashboard|meta|settings|restaurants|campaigns|orders|reports\/months|reports\/monthly|reports\/monthly\.pdf)$/],
+    ['GET', /^\/(auth\/me|events|dashboard|meta|settings|restaurants|campaigns|orders|referrals|reports\/months|reports\/monthly|reports\/monthly\.pdf)$/],
     ['GET', /^\/campaigns\/[^/]+(\/messages)?$/],
     ['GET', /^\/orders\/[^/]+$/],
     ['PUT', /^\/orders\/[^/]+\/status$/],
@@ -177,6 +179,7 @@ function createApi(container) {
 
   router.post('/restaurants', wrap(async (req, res) => {
     const data = pick(req.body || {}, RESTAURANT_FIELDS);
+    if (data.referral !== undefined) data.referral = ReferralService.normalizeRule(data.referral);
     if (!data.name?.trim()) throw new Error('Informe o nome do restaurante.');
     const r = await repos.restaurants.create({ color: '#73350c', emoji: '🍽️', menu: [], ...data, slug: await uniqueSlug(data.name) });
     res.status(201).json(await withCountsOne(r));
@@ -186,6 +189,7 @@ function createApi(container) {
     const r = await repos.restaurants.get(req.params.id);
     if (!r) throw notFound('Restaurante não encontrado');
     const data = pick(req.body || {}, RESTAURANT_FIELDS);
+    if (data.referral !== undefined) data.referral = ReferralService.normalizeRule(data.referral);
     if (data.name && data.name !== r.name) data.slug = await uniqueSlug(data.name, r.id);
     res.json(await withCountsOne(await repos.restaurants.update(r, data)));
   }));
@@ -373,6 +377,24 @@ function createApi(container) {
   router.post('/orders/import', wrap(async (req, res) => {
     const { restaurantId, rows, channel, consent } = req.body || {};
     res.json(await orderService.runImport({ restaurantId, rows, channel, consent: consent === true }));
+  }));
+
+  // ── Indicação (etapa 4) ────────────────────────────────────
+  router.get('/referrals', wrap(async (req, res) => {
+    const scope = scopeOf(req, req.query.restaurantId);
+    const [links, coupons] = await Promise.all([repos.referrals.withStats(scope), repos.coupons.list(scope)]);
+    const restaurants = new Map((await repos.restaurants.all()).map((r) => [r.id, r]));
+    res.json({
+      links: links.map((l) => ({ ...l, url: referralService.linkUrl(restaurants.get(l.restaurantId), l) })),
+      coupons,
+    });
+  }));
+
+  router.post('/coupons/:id/resend', wrap(async (req, res) => {
+    const coupon = await repos.coupons.get(req.params.id);
+    if (!coupon) throw notFound('Cupom não encontrado');
+    if (coupon.usedAt) throw new Error('Este cupom já foi usado.');
+    res.json(await referralService.sendReward(coupon));
   }));
 
   // ── Campanhas ──────────────────────────────────────────────

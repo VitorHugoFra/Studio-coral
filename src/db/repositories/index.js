@@ -5,6 +5,8 @@ const { ContactsRepo } = require('./contacts');
 const { CampaignsRepo } = require('./campaigns');
 const { MessagesRepo } = require('./messages');
 const { OrdersRepo } = require('./orders');
+const { ReferralsRepo } = require('./referrals');
+const { CouponsRepo } = require('./coupons');
 
 /**
  * Configurações vistas de dentro de uma transação: leitura da cópia em memória.
@@ -32,12 +34,14 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     campaigns: new CampaignsRepo(db),
     messages: new MessagesRepo(db),
     orders: new OrdersRepo(db),
+    referrals: new ReferralsRepo(db),
+    coupons: new CouponsRepo(db),
     tx(fn) {
       return db.tx((t) => fn(createRepositories(t, { settings: readOnlySettings(settings) })));
     },
     /** Apaga todos os dados (as tabelas filhas vão junto) e volta as configurações ao padrão (npm run seed). */
     async reset() {
-      await db.exec("TRUNCATE restaurants, users, contacts, campaigns, messages, orders CASCADE; UPDATE settings SET data = '{}' WHERE id = 1;");
+      await db.exec("TRUNCATE restaurants, users, contacts, campaigns, messages, orders, referral_links, coupons CASCADE; UPDATE settings SET data = '{}' WHERE id = 1;");
       await settings.load();
     },
   };

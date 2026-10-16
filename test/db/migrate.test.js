@@ -15,7 +15,8 @@ describe('migrações', () => {
       assert.deepEqual(await migrate(db), []);
       const tables = (await db.many("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")).map((t) => t.table_name);
       // A etapa 2 (003_pedidos) renomeou conversions para orders
-      assert.deepEqual(tables, ['campaigns', 'contacts', 'messages', 'orders', 'restaurants', 'schema_migrations', 'settings', 'users']);
+      // A etapa 4 (005_indicacoes) acrescentou coupons e referral_links
+      assert.deepEqual(tables, ['campaigns', 'contacts', 'coupons', 'messages', 'orders', 'referral_links', 'restaurants', 'schema_migrations', 'settings', 'users']);
       assert.deepEqual(await db.one('SELECT id, data FROM settings'), { id: 1, data: {} });
       // Sem estes índices, excluir um contato ou uma mensagem varre a tabela filha inteira
       const indexes = (await db.many("SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('messages_contact', 'orders_message', 'orders_contact') ORDER BY indexname")).map((i) => i.indexname);

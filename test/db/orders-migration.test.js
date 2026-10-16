@@ -27,7 +27,7 @@ describe('migração 003: das conversões da etapa 1 para os pedidos', () => {
         ($2, '2026-09-06T12:00:00Z', $3, NULL, 'Beto', 'PED-2', 30, '[]')`, [C1, C2, R, K]);
 
       // Agora o sistema novo sobe e aplica o que falta
-      assert.deepEqual(await migrate(db), ['003_pedidos']);
+      assert.equal((await migrate(db))[0], '003_pedidos', 'a 003 é a primeira que falta (as seguintes também entram)');
       const repos = createRepositories(db);
       const ana = await repos.orders.get(C1);
       assert.deepEqual(

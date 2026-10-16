@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Indique e ganhe</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Solway:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <script defer src="/vendor/alpine.js"></script>
+  <style>
+    /* Página do cliente final para criar o próprio link de indicação: mesma coluna e cores do cardápio. */
+    :root { --c: #73350c; --txt: #2b2b2b; --sub: #6f6f6f; --bg: #f2f2f2; }
+    body { background: var(--bg); font-family: 'Open Sans', system-ui, sans-serif; color: var(--txt); font-size: 15px; }
+    .app { max-width: 600px; margin: 0 auto; background: #fff; min-height: 100vh; box-shadow: 0 0 0 1px #e6e6e6; }
+    .top { height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; border-bottom: 1px solid #eee; font-family: var(--font); font-weight: 700; font-size: 15px; }
+    .top .m { width: 30px; height: 30px; border-radius: 50%; background: var(--c); color: #fff; display: grid; place-items: center; font-size: 12px; }
+    .hero { padding: 26px 18px 6px; text-align: center; display: grid; gap: 8px; }
+    .hero h1 { font-family: 'Open Sans', sans-serif; font-size: 24px; letter-spacing: 0; }
+    .hero p { margin: 0; color: var(--sub); line-height: 1.5; }
+    .rules { margin: 14px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .rules div { border: 1px solid #ececec; border-radius: 10px; padding: 12px; text-align: center; }
+    .rules b { display: block; font-size: 22px; color: var(--c); }
+    .rules span { font-size: 12.5px; color: var(--sub); }
+    form, .done { padding: 6px 16px 24px; display: grid; gap: 12px; }
+    .field label { font-family: 'Open Sans', sans-serif; }
+    .field label .opt { font-weight: 400; color: var(--sub); text-transform: none; letter-spacing: 0; }
+    .slug { display: flex; align-items: center; border: 1px solid var(--line-2); border-radius: var(--r); background: #fff; overflow: hidden; }
+    .slug span { padding: 0 8px 0 12px; color: var(--sub); font-size: 13px; white-space: nowrap; }
+    .slug .input { border: 0; padding-left: 0; }
+    textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 10px; font: inherit; min-height: 84px; resize: vertical; }
+    .main-btn { border: 0; border-radius: 8px; background: var(--c); color: #fff; font: inherit; font-weight: 700; padding: 13px 16px; cursor: pointer; text-align: center; text-decoration: none; display: block; }
+    .ghost-btn { border: 1px solid #ddd; border-radius: 8px; background: #fff; color: var(--txt); font: inherit; font-weight: 600; padding: 11px 16px; cursor: pointer; }
+    .optin { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; line-height: 1.45; cursor: pointer; }
+    .optin input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--c); flex: none; }
+    .linkbox { border: 1.5px dashed var(--c); border-radius: 10px; padding: 12px; font-weight: 700; color: var(--c); word-break: break-all; text-align: center; }
+    .preview { background: #f6f6f6; border-radius: 10px; padding: 12px; white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
+    .empty { min-height: 70vh; display: grid; place-items: center; text-align: center; color: var(--sub); padding: 24px; }
+  </style>
+</head>
+<body x-data="indicar" x-cloak :style="`--c:${r?.color || '#73350c'}`">
+  <div class="app">
+    <template x-if="r">
+      <div>
+        <header class="top"><span class="m" x-text="initials"></span><span x-text="r.name"></span></header>
+
+        <template x-if="!r.referral">
+          <div class="empty"><div><p><b>O programa de indicação não está ativo agora.</b></p><a class="ghost-btn" style="text-decoration:none;display:inline-block" :href="`/demo/${r.slug}`">Ver o cardápio</a></div></div>
+        </template>
+
+        <template x-if="r.referral">
+          <div>
+            <section class="hero">
+              <h1>Indique e ganhe</h1>
+              <p x-text="`Crie o seu link e mande para os amigos. Eles ganham desconto no primeiro pedido e, quando o pedido sai, você recebe um cupom pelo WhatsApp.`"></p>
+            </section>
+            <div class="rules">
+              <div><b x-text="r.referral.discount"></b><span x-text="`para o seu amigo no primeiro pedido${r.referral.minOrder ? ` acima de ${money(r.referral.minOrder)}` : ''}`"></span></div>
+              <div><b x-text="r.referral.reward"></b><span x-text="`de cupom para você${r.referral.rewardMinOrder ? ` (pedidos acima de ${money(r.referral.rewardMinOrder)})` : ''}, válido por ${r.referral.rewardValidDays} dias`"></span></div>
+            </div>
+
+            <template x-if="!link">
+              <form @submit.prevent="create">
+                <div class="field"><label for="n">Seu nome</label><input id="n" class="input" x-model="form.name" autocomplete="name" required maxlength="80"></div>
+                <div class="field"><label for="p">Seu WhatsApp</label><input id="p" class="input" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="(31) 99999-9999" x-model="form.phone" required><span class="hint">É para onde vai o seu cupom.</span></div>
+                <div class="field">
+                  <label for="s">Seu link <span class="opt">(opcional)</span></label>
+                  <div class="slug"><span x-text="`/i/${r.slug}/`"></span><input id="s" class="input" x-model="form.slug" placeholder="seu-nome" maxlength="30"></div>
+                  <span class="hint">Letras, números e hífen. Em branco, usamos o seu primeiro nome.</span>
+                </div>
+                <div class="field"><label for="m">Mensagem para os amigos <span class="opt">(opcional)</span></label><textarea id="m" x-model="form.message" maxlength="500" placeholder="Ex.: A lasanha daqui é a melhor da cidade, pede pelo meu link!"></textarea><span class="hint">O link vai junto no final.</span></div>
+                <label class="optin"><input type="checkbox" x-model="form.marketingOptIn"><span>Quero receber as promoções deste restaurante pelo WhatsApp.</span></label>
+                <p class="note red" style="margin:0" x-show="error" x-text="error" role="alert"></p>
+                <button class="main-btn" :disabled="sending"><span class="spin" x-show="sending"></span> Criar meu link</button>
+              </form>
+            </template>
+
+            <template x-if="link">
+              <div class="done">
+                <p style="margin:0" x-text="link.existing ? 'Este WhatsApp já tem um link de indicação. É este aqui:' : 'Pronto! Este é o seu link:'"></p>
+                <div class="linkbox" x-text="link.url"></div>
+                <a class="main-btn" :href="link.whatsappUrl" target="_blank" rel="noopener">Mandar no WhatsApp</a>
+                <button class="ghost-btn" type="button" @click="copy" x-text="copied ? 'Link copiado' : 'Copiar o link'"></button>
+                <div>
+                  <div class="small muted" style="margin-bottom:6px">Mensagem que vai junto:</div>
+                  <div class="preview" x-text="link.share"></div>
+                </div>
+                <template x-if="link.editToken">
+                  <form @submit.prevent="save" style="padding:0">
+                    <div class="field"><label for="m2">Mudar a mensagem</label><textarea id="m2" x-model="form.message" maxlength="500"></textarea></div>
+                    <button class="ghost-btn" :disabled="sending">Salvar a mensagem</button>
+                  </form>
+                </template>
+                <a class="ghost-btn" style="text-align:center;text-decoration:none" :href="`/demo/${r.slug}`">Ver o cardápio</a>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </template>
+    <template x-if="missing"><div class="empty">Restaurante não encontrado.</div></template>
+  </div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  // O navegador pode bloquear o armazenamento (aba anônima): sem ele, a página só não lembra o link
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem armazenamento */ } },
+  };
+  Alpine.data('indicar', () => ({
+    r: null, missing: false, link: null, sending: false, error: '', copied: false,
+    form: { name: '', phone: '', slug: '', message: '', marketingOptIn: false },
+
+    async init() {
+      const slug = location.pathname.split('/').filter(Boolean).pop();
+      const res = await fetch(`/api/public/restaurants/${slug}`);
+      if (!res.ok) { this.missing = true; return; }
+      this.r = await res.json();
+      document.title = `Indique e ganhe · ${this.r.name}`;
+      // Link criado neste aparelho: mostra de novo (com a chave para editar a mensagem)
+      const mine = store.get(`sc_indicacao_${slug}`);
+      if (mine?.link) { this.link = mine.link; this.form.message = mine.link.message || ''; }
+      const saved = store.get(`sc_cliente_${slug}`);
+      if (saved && !this.link) Object.assign(this.form, { name: saved.name || '', phone: saved.phone || '' });
+    },
+    get initials() { return this.r.name.split(/\s+/).filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); },
+    money: (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+
+    async create() {
+      this.error = '';
+      this.sending = true;
+      try {
+        const res = await fetch('/api/public/referrals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restaurantSlug: this.r.slug, ...this.form }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { this.error = data.error || 'Não foi possível criar o link.'; return; }
+        this.link = data;
+        if (data.editToken) store.set(`sc_indicacao_${this.r.slug}`, { link: data });
+      } catch {
+        this.error = 'Sem conexão. Tente de novo.';
+      } finally { this.sending = false; }
+    },
+    async save() {
+      this.sending = true;
+      try {
+        const res = await fetch(`/api/public/referrals/${this.link.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editToken: this.link.editToken, message: this.form.message }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { this.error = data.error || 'Não foi possível salvar.'; return; }
+        this.link = { ...data, editToken: this.link.editToken };
+        store.set(`sc_indicacao_${this.r.slug}`, { link: this.link });
+      } finally { this.sending = false; }
+    },
+    copy() {
+      navigator.clipboard?.writeText(this.link.url).then(() => { this.copied = true; setTimeout(() => { this.copied = false; }, 2000); }, () => {});
+    },
+  }));
+});
+</script>
+</body>
+</html>

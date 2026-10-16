@@ -22,10 +22,12 @@ class DuplicateOrder extends Error {}
  * pedidos de sites externos e importação de planilhas. As rotas só traduzem HTTP para cá.
  */
 class OrderService {
-  constructor({ repos, events, config }) {
+  constructor({ repos, events, config, referrals = null, logger = console }) {
     this.repos = repos;
     this.events = events;
     this.config = config;
+    this.referrals = referrals; // indicação e cupons (etapa 4)
+    this.logger = logger;
   }
 
   static get STATUSES() { return [...STATUSES]; }
@@ -76,6 +78,9 @@ class OrderService {
       items,
       marketingOptIn: body.marketingOptIn === true,
       orderId: orderKey ? `site-${orderKey}` : null,
+      // Indicação (apelido do link) e cupom digitado: a regra fica no ReferralService
+      referral: text(body.referral, 40).toLowerCase() || null,
+      couponCode: text(body.couponCode, 20).replace(/\s/g, '').toUpperCase() || null,
     };
   }
 
@@ -108,21 +113,28 @@ class OrderService {
     const ref = body.ref ? await this.repos.messages.byCode(String(body.ref)) : null;
     const message = ref && ref.restaurantId === restaurant.id ? ref : null;
     const campaign = message ? await this.repos.campaigns.get(message.campaignId) : null;
-    const coupon = campaign?.coupon || restaurant.coupon || null;
+    const houseCoupon = campaign?.coupon || restaurant.coupon || null;
     const subtotal = round2(data.items.reduce((s, it) => s + it.qty * it.price, 0));
-    const discount = coupon ? round2(subtotal * DISCOUNT_RATE) : 0;
-    const total = Math.max(0, round2(subtotal - discount));
     const at = new Date().toISOString();
+    let picked = null;
 
     try {
       const order = await this.repos.tx(async (r) => {
         // Primeiro o número: a linha do restaurante fica travada até o fim, então a conferência do pedido repetido é segura
         const number = await r.restaurants.nextOrderNumber(restaurant.id);
         if (data.orderId && (await r.orders.findByOrderId(restaurant.id, data.orderId))) throw new DuplicateOrder();
+        // Indicação e cupom dependem de quem compra (primeiro pedido, autoindicação): a conta vem antes do contato novo
+        const known = await r.contacts.findByPhoneKey(restaurant.id, data.phone);
+        picked = this.referrals
+          ? await this.referrals.pickDiscount(r, { restaurant, subtotal, phone: data.phone, contactId: known?.id || null, referralSlug: data.referral, couponCode: data.couponCode, houseCoupon })
+          : { discount: houseCoupon ? round2(subtotal * DISCOUNT_RATE) : 0, label: houseCoupon, referralId: null, couponId: null, referral: null };
+        const discount = Math.min(picked.discount, subtotal);
         const contact = await OrderService.upsertContact(r, restaurant.id, {
           name: data.name, phone: data.phone, birthday: data.birthday, optIn: data.marketingOptIn, optInSource: 'Pedido no site',
         });
         const created = await r.orders.createUnique({
+          referralId: picked.referralId,
+          couponId: picked.couponId,
           restaurantId: restaurant.id,
           campaignId: message?.campaignId || null,
           messageId: message?.id || null,
@@ -132,7 +144,7 @@ class OrderService {
           orderId: data.orderId,
           number,
           trackingCode: crypto.randomBytes(9).toString('base64url'),
-          source: message ? 'campaign' : 'site',
+          source: picked.referralId ? 'referral' : message ? 'campaign' : 'site',
           status: 'new',
           statusLog: [{ status: 'new', at, by: null }],
           fulfillment: data.fulfillment,
@@ -144,16 +156,18 @@ class OrderService {
           items: data.items,
           subtotal,
           discount,
-          coupon: discount ? coupon : null,
-          value: total,
+          coupon: discount ? picked.label : null,
+          value: Math.max(0, round2(subtotal - discount)),
           createdAt: at,
         });
         if (!created) throw new DuplicateOrder();
+        // Cupom de uso único: se outro pedido usou no meio do caminho, este desfaz tudo e a pessoa vê o motivo
+        if (picked.couponId && !(await r.coupons.markUsed(picked.couponId, created.id, at))) throw invalid('Este cupom já foi usado.');
         if (message && !message.convertedAt) await r.messages.markConverted(message.id, created.createdAt);
         return created;
       });
       this.events.publish('order', { ...order, restaurant: restaurant.name });
-      return { order, restaurant, duplicated: false };
+      return { order, restaurant, duplicated: false, referral: picked.referral };
     } catch (err) {
       if (!(err instanceof DuplicateOrder)) throw err;
       return { order: await this.repos.orders.findByOrderId(restaurant.id, data.orderId), restaurant, duplicated: true };
@@ -201,6 +215,10 @@ class OrderService {
     const saved = await this.repos.orders.changeStatus(order, { from: order.status, to, entry });
     if (!saved) throw conflict('O pedido foi atualizado por outra pessoa. Recarregue para ver a situação atual.');
     this.events.publish('order:update', saved);
+    // Pedido indicado concluído: o cupom de quem indicou. Falha aqui não desfaz a mudança de status
+    if (to === 'completed' && saved.referralId && this.referrals) {
+      try { await this.referrals.onOrderCompleted(saved); } catch (err) { this.logger.error('[indicação]', err); }
+    }
     return saved;
   }
 
