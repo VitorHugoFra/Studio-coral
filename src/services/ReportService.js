@@ -42,7 +42,7 @@ class ReportService {
     const to = end.toISOString();
     const [counts, sales] = await Promise.all([
       this.repos.messages.summary({ restaurantId, sentFrom: from, sentTo: to }),
-      this.repos.conversions.summary({ restaurantId, attributedOnly: true, from, to }),
+      this.repos.orders.summary({ restaurantId, attributedOnly: true, from, to }),
     ]);
     return { summary: AnalyticsService.withRates(counts, sales), start, end, from, to };
   }
@@ -59,7 +59,7 @@ class ReportService {
 
     const [sent, orders, started, base] = await Promise.all([
       this.repos.messages.sentBetween(restaurantId, cur.from, cur.to),
-      this.repos.conversions.attributedBetween(restaurantId, cur.from, cur.to),
+      this.repos.orders.attributedBetween(restaurantId, cur.from, cur.to),
       this.repos.campaigns.startedBetween(restaurantId, cur.from, cur.to),
       this.repos.contacts.stats({ restaurantId, from: cur.from, to: cur.to }),
     ]);

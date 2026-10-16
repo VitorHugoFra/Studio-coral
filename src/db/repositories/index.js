@@ -4,7 +4,7 @@ const { SettingsRepo, DEFAULT_SETTINGS } = require('./settings');
 const { ContactsRepo } = require('./contacts');
 const { CampaignsRepo } = require('./campaigns');
 const { MessagesRepo } = require('./messages');
-const { ConversionsRepo } = require('./conversions');
+const { OrdersRepo } = require('./orders');
 
 /**
  * Configurações vistas de dentro de uma transação: leitura da cópia em memória.
@@ -31,13 +31,13 @@ function createRepositories(db, { settings = new SettingsRepo(db) } = {}) {
     contacts: new ContactsRepo(db),
     campaigns: new CampaignsRepo(db),
     messages: new MessagesRepo(db),
-    conversions: new ConversionsRepo(db),
+    orders: new OrdersRepo(db),
     tx(fn) {
       return db.tx((t) => fn(createRepositories(t, { settings: readOnlySettings(settings) })));
     },
     /** Apaga todos os dados (as tabelas filhas vão junto) e volta as configurações ao padrão (npm run seed). */
     async reset() {
-      await db.exec("TRUNCATE restaurants, users, contacts, campaigns, messages, conversions CASCADE; UPDATE settings SET data = '{}' WHERE id = 1;");
+      await db.exec("TRUNCATE restaurants, users, contacts, campaigns, messages, orders CASCADE; UPDATE settings SET data = '{}' WHERE id = 1;");
       await settings.load();
     },
   };
