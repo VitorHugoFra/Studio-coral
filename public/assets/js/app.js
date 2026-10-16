@@ -49,6 +49,7 @@ const ORDER_CLASS = { new: 'sending', preparing: 'scheduled', dispatched: 'deliv
 const ORDER_SOURCE = { site: 'Site', campaign: 'Campanha', import: 'Planilha', referral: 'Indicação' };
 const ORDER_NEXT = { new: 'preparing', preparing: 'dispatched', dispatched: 'completed' };
 const ORDER_COLUMN_LABELS = { orderId: 'número do pedido', date: 'data', name: 'cliente', phone: 'telefone', total: 'total', discount: 'desconto', neighborhood: 'bairro', items: 'itens' };
+const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 const MONTH_NAMES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const OBJECTIVES = ['Reativar clientes inativos', 'Aumentar pedidos no fim de semana', 'Aumentar pedidos no almoço', 'Divulgar lançamento de produto', 'Data comemorativa', 'Recompensar melhores clientes', 'Fidelização', 'Oportunidade do clima'];
 const EMOJIS = ['😋', '🔥', '🎉', '💛', '👉', '🍕', '🍝', '🍔', '🍣', '🥗', '🍲', '🍰', '🎁', '⏰', '🛵', '✨'];
@@ -212,7 +213,7 @@ function trendChart(series, hover) {
 // ── Componente principal ───────────────────────────────────
 document.addEventListener('alpine:init', () => {
   Alpine.data('coral', () => ({
-    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, OBJECTIVES, EMOJIS, waFormat, ORDER_STATUS, ORDER_CLASS, ORDER_SOURCE, ORDER_COLUMN_LABELS, MONTH_NAMES,
+    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, OBJECTIVES, EMOJIS, waFormat, ORDER_STATUS, ORDER_CLASS, ORDER_SOURCE, ORDER_COLUMN_LABELS, MONTH_NAMES, WEEKDAYS,
     icon: (name, size) => window.icon(name, size),
 
     booted: false,
@@ -236,6 +237,9 @@ document.addEventListener('alpine:init', () => {
     contacts: [],
     contactTags: [],
     contactFilter: { search: '', tag: '', status: '' },
+    contactFilters: {},
+    contactProfile: null,
+    filterModal: null,
     contactModal: null,
     importModal: null,
 
@@ -416,6 +420,7 @@ document.addEventListener('alpine:init', () => {
       }
       this.route = { name, params: { id, action } };
       this.detail = null;
+      this.contactProfile = null;
       this.editor = null;
       window.scrollTo({ top: 0 });
       await this.loadRoute();
@@ -428,7 +433,7 @@ document.addEventListener('alpine:init', () => {
       try {
         if (name === 'painel') { await this.loadDashboard(); if (this.isRestaurant) await this.loadCampaigns(); }
         if (name === 'restaurantes') this.restaurants = await api('/restaurants');
-        if (name === 'contatos') await this.loadContacts();
+        if (name === 'contatos') { if (params.id) await this.loadContactProfile(params.id); else await this.loadContacts(); }
         if (name === 'pedidos') await this.loadOrders();
         if (name === 'campanhas') {
           if (!params.id) await this.loadCampaigns();
@@ -544,6 +549,7 @@ document.addEventListener('alpine:init', () => {
     // ── Contatos ───────────────────────────────────────────
     async loadContacts() {
       const q = new URLSearchParams({ ...(this.scope ? { restaurantId: this.scope } : {}), ...Object.fromEntries(Object.entries(this.contactFilter).filter(([, v]) => v)) });
+      if (Object.keys(this.contactFilters).length) q.set('filters', JSON.stringify(this.contactFilters));
       const [list, tags] = await Promise.all([api(`/contacts?${q}`), api(`/contacts/tags${this.scope ? `?restaurantId=${this.scope}` : ''}`)]);
       this.contacts = list;
       this.contactTags = tags;
@@ -566,6 +572,11 @@ document.addEventListener('alpine:init', () => {
       return `${c.birthDay} de ${MONTH_NAMES[c.birthMonth - 1]}${c.birthYear ? ` de ${c.birthYear}` : ''}`;
     },
 
+    /** Depois de editar um contato: na ficha, recarrega a ficha; na lista, a lista. */
+    refreshContacts() {
+      return this.route.params.id ? this.loadContactProfile(this.route.params.id) : this.loadContacts();
+    },
+
     async saveContact() {
       const c = this.contactModal;
       const body = { ...c, tags: c.tagsText };
@@ -573,7 +584,7 @@ document.addEventListener('alpine:init', () => {
         if (c.id) await api(`/contacts/${c.id}`, { method: 'PUT', body });
         else await api('/contacts', { method: 'POST', body });
         this.contactModal = null;
-        await this.loadContacts();
+        await this.refreshContacts();
         this.toast('Contato salvo.');
       } catch (err) { this.error(err); }
     },
@@ -581,14 +592,14 @@ document.addEventListener('alpine:init', () => {
     async toggleOptOut(c) {
       try {
         await api(`/contacts/${c.id}`, { method: 'PUT', body: { optedOut: !c.optedOut } });
-        await this.loadContacts();
+        await this.refreshContacts();
       } catch (err) { this.error(err); }
     },
 
     deleteContact(c) {
       this.confirm(`Remover ${c.name || fmt.phone(c.phone)}?`, 'O contato sai da base deste restaurante.', async () => {
         await api(`/contacts/${c.id}`, { method: 'DELETE' });
-        await this.loadContacts();
+        if (this.route.params.id) this.go('#/contatos'); else await this.loadContacts();
       });
     },
 
@@ -616,6 +627,118 @@ document.addEventListener('alpine:init', () => {
         await this.loadContacts();
         this.restaurants = await api('/restaurants');
       } catch (err) { this.error(err); } finally { m.loading = false; }
+    },
+
+    // ── Filtros de compra (público da campanha e lista de contatos) ─
+    /** Resumo legível dos filtros, um texto por filtro ativo. */
+    describeFilters(f = {}) {
+      const out = [];
+      const span = (r, one, many, money = false) => {
+        const v = (n) => (money ? fmt.money(n) : fmt.int(n));
+        if (r.min !== undefined && r.max !== undefined) return r.min === r.max ? `${v(r.min)} ${r.min === 1 ? one : many}` : `de ${v(r.min)} a ${v(r.max)} ${many}`;
+        if (r.min !== undefined) return `${v(r.min)}+ ${r.min === 1 ? one : many}`;
+        return `até ${v(r.max)} ${r.max === 1 ? one : many}`;
+      };
+      const day = (s) => s.split('-').reverse().join('/');
+      const period = (p) => (p.from && p.to ? `de ${day(p.from)} a ${day(p.to)}` : p.from ? `desde ${day(p.from)}` : `até ${day(p.to)}`);
+      if (f.orders) out.push(f.orders.max === 0 && f.orders.min === undefined ? 'nunca compraram' : span(f.orders, 'pedido', 'pedidos'));
+      if (f.spent) out.push(`gastaram ${span(f.spent, '', '', true).trim()}`);
+      if (f.lastOrderDays) {
+        const { min, max } = f.lastOrderDays;
+        out.push(min !== undefined && max !== undefined ? `última compra entre ${min} e ${max} dias atrás` : min !== undefined ? `sem comprar há ${min}+ dias` : `compraram nos últimos ${max} dias`);
+      }
+      if (f.firstOrder) out.push(`primeira compra ${period(f.firstOrder)}`);
+      if (f.lastOrder) out.push(`última compra ${period(f.lastOrder)}`);
+      if (f.birthday?.month) out.push(`aniversário em ${MONTH_NAMES[f.birthday.month - 1]}`);
+      if (f.birthday?.nextDays) out.push(`aniversário nos próximos ${f.birthday.nextDays} dias`);
+      if (f.neighborhoods?.length) out.push(`bairro: ${f.neighborhoods.join(', ')}`);
+      if (f.items?.length) out.push(`${f.itemsMode === 'any' ? 'já pediram' : 'mais pedem'}: ${f.items.join(', ')}`);
+      if (f.weekdays?.length) out.push(`preferem ${f.weekdays.map((d) => WEEKDAYS[d]).join(', ')}`);
+      return out;
+    },
+    segmentText(segment) {
+      const parts = [...(segment?.tags?.length ? [`tags: ${segment.tags.join(', ')}`] : []), ...this.describeFilters(segment?.filters)];
+      return parts.length ? parts.join(' · ') : 'base completa';
+    },
+    /** Filtros gravados → campos da janela (texto nos inputs, listas nas etiquetas). */
+    filtersToForm(f = {}) {
+      const s = (v) => (v === undefined || v === null ? '' : String(v));
+      return {
+        ordersMin: s(f.orders?.min), ordersMax: s(f.orders?.max), spentMin: s(f.spent?.min), spentMax: s(f.spent?.max),
+        lastMin: s(f.lastOrderDays?.min), lastMax: s(f.lastOrderDays?.max),
+        firstFrom: s(f.firstOrder?.from), firstTo: s(f.firstOrder?.to), lastFrom: s(f.lastOrder?.from), lastTo: s(f.lastOrder?.to),
+        bdayMode: f.birthday?.month ? 'month' : f.birthday?.nextDays ? 'next' : '',
+        bdayMonth: s(f.birthday?.month || new Date().getMonth() + 1), bdayNext: s(f.birthday?.nextDays || 7),
+        neighborhoods: [...(f.neighborhoods || [])], items: [...(f.items || [])], itemsMode: f.itemsMode || 'top', weekdays: [...(f.weekdays || [])],
+      };
+    },
+    /** Campos da janela → filtros (o servidor valida de novo e descarta o que estiver vazio). */
+    formToFilters(m) {
+      const range = (min, max) => ({ ...(min !== '' ? { min: Number(String(min).replace(',', '.')) } : {}), ...(max !== '' ? { max: Number(String(max).replace(',', '.')) } : {}) });
+      const period = (from, to) => ({ ...(from ? { from } : {}), ...(to ? { to } : {}) });
+      const out = {
+        orders: range(m.ordersMin, m.ordersMax), spent: range(m.spentMin, m.spentMax), lastOrderDays: range(m.lastMin, m.lastMax),
+        firstOrder: period(m.firstFrom, m.firstTo), lastOrder: period(m.lastFrom, m.lastTo),
+        birthday: m.bdayMode === 'month' ? { month: Number(m.bdayMonth) } : m.bdayMode === 'next' ? { nextDays: Number(m.bdayNext) } : {},
+        neighborhoods: m.neighborhoods, items: m.items, weekdays: m.weekdays,
+      };
+      if (m.items.length) out.itemsMode = m.itemsMode;
+      return Object.fromEntries(Object.entries(out).filter(([, v]) => (Array.isArray(v) ? v.length : typeof v === 'object' ? Object.keys(v).length : true)));
+    },
+    async openFilters(target) {
+      const current = target === 'editor' ? this.editor.form.segment.filters : this.contactFilters;
+      const restaurantId = target === 'editor' ? this.editor.form.restaurantId : this.scope;
+      this.filterModal = { target, restaurantId, form: this.filtersToForm(current), facets: { neighborhoods: [], items: [] }, count: null, error: '' };
+      this.refreshFilterCount();
+      try {
+        this.filterModal.facets = await api(`/contacts/facets${restaurantId ? `?restaurantId=${restaurantId}` : ''}`);
+      } catch (err) { this.error(err); }
+    },
+    toggleIn(list, value) {
+      const i = list.indexOf(value);
+      if (i >= 0) list.splice(i, 1); else list.push(value);
+      this.refreshFilterCount();
+    },
+    /** Quantos autorizados passam nos filtros (com as tags da campanha, quando é a campanha). */
+    refreshFilterCount() {
+      clearTimeout(this.filterTimer);
+      this.filterTimer = setTimeout(async () => {
+        const m = this.filterModal;
+        if (!m?.restaurantId) return;
+        const tags = m.target === 'editor' ? this.editor.form.segment : { tags: [], match: 'any' };
+        try {
+          const res = await api('/audience/preview', { method: 'POST', body: { restaurantId: m.restaurantId, segment: { tags: tags.tags, match: tags.match, filters: this.formToFilters(m.form) } } });
+          m.count = res.count;
+          m.error = '';
+        } catch (err) { m.error = err.message; m.count = null; }
+      }, 250);
+    },
+    applyFilters() {
+      const m = this.filterModal;
+      if (m.error) return;
+      const filters = this.formToFilters(m.form);
+      if (m.target === 'editor') {
+        this.editor.form.segment.filters = filters;
+        this.refreshAudience();
+      } else {
+        this.contactFilters = filters;
+        this.loadContacts().catch((err) => this.error(err));
+      }
+      this.filterModal = null;
+    },
+    clearFilters(target) {
+      if (target === 'editor') { this.editor.form.segment.filters = {}; this.refreshAudience(); } else { this.contactFilters = {}; this.loadContacts().catch((err) => this.error(err)); }
+    },
+
+    // ── Ficha do cliente ───────────────────────────────────
+    async loadContactProfile(id) {
+      this.contactProfile = await api(`/contacts/${id}`);
+    },
+    messageLabel(m) {
+      if (m.convertedAt) return { label: 'Pediu', cls: 'completed' };
+      if (m.clickedAt) return { label: 'Clicou', cls: 'sending' };
+      if (m.readAt) return { label: 'Leu', cls: 'delivered' };
+      return { label: MSG_STATUS[m.status] || m.status, cls: ['failed', 'skipped'].includes(m.status) ? 'failed' : 'queued' };
     },
 
     // ── Pedidos ────────────────────────────────────────────
@@ -765,7 +888,7 @@ document.addEventListener('alpine:init', () => {
       const r = this.restaurantById(restaurantId);
       this.editor = this.makeEditor({
         id: null, restaurantId, name: '', objective: '', occasion: '', coupon: r?.coupon || '', message: '', mediaUrl: '', destinationUrl: '',
-        segment: { tags: [], match: 'any' }, includeFooter: true, cloudTemplate: null, status: 'draft',
+        segment: { tags: [], match: 'any', filters: {} }, includeFooter: true, cloudTemplate: null, status: 'draft',
       });
       await Promise.all([this.refreshEditorTags(), this.loadUploads()]);
     },
@@ -781,7 +904,7 @@ document.addEventListener('alpine:init', () => {
       const cloud = c.cloudTemplate || { name: '', language: 'pt_BR', params: [] };
       return {
         step: 1,
-        form: { ...c, segment: { tags: [...(c.segment?.tags || [])], match: c.segment?.match || 'any' }, cloudTemplate: { ...cloud, paramsText: (cloud.params || []).join('\n') } },
+        form: { ...c, segment: { tags: [...(c.segment?.tags || [])], match: c.segment?.match || 'any', filters: JSON.parse(JSON.stringify(c.segment?.filters || {})) }, cloudTemplate: { ...cloud, paramsText: (cloud.params || []).join('\n') } },
         tags: [],
         audience: { count: c.audiencePreview ?? 0, sample: [] },
         seed: 0,
@@ -825,6 +948,7 @@ document.addEventListener('alpine:init', () => {
       if (!f.name) f.name = idea.title;
       const known = this.editor.tags.map((t) => t.tag);
       f.segment.tags = idea.tags.filter((t) => known.includes(t));
+      f.segment.filters = JSON.parse(JSON.stringify(idea.filters || {}));
       this.refreshAudience();
       this.toast(`Modelo “${idea.title}” aplicado. Revise o texto antes de enviar.`);
     },

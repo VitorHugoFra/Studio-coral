@@ -5,6 +5,7 @@ const { CAMPAIGN_IDEAS } = require('../ideas');
 const { AuthService } = require('../services/AuthService');
 const { ReportService } = require('../services/ReportService');
 const input = require('../services/orderInput');
+const audienceFilters = require('../services/audienceFilters');
 
 const slugify = (s) => String(s || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -197,22 +198,57 @@ function createApi(container) {
   }));
 
   // ── Contatos (base autorizada) ─────────────────────────────
-  // Perfil de compra calculado na hora a partir dos pedidos (nada é gravado no contato)
-  const NO_PURCHASES = { orders: 0, total: 0, firstAt: null, lastAt: null, lastNeighborhood: null };
+  // Perfil de compra calculado na hora a partir dos pedidos (nada é gravado no contato); ?filters=<JSON> com os filtros de compra
+  const queryFilters = (raw) => {
+    if (!raw) return {};
+    let parsed;
+    try { parsed = JSON.parse(String(raw)); } catch { throw new Error('Filtros inválidos.'); }
+    return audienceFilters.normalize(parsed);
+  };
   router.get('/contacts', wrap(async (req, res) => {
     const { restaurantId, search = '', tag, status } = req.query;
     const q = String(search).toLowerCase();
     const digits = q.replace(/\D/g, '');
-    const [contacts, profiles] = await Promise.all([repos.contacts.listByRestaurant({ restaurantId, tag, status }), repos.orders.profiles(restaurantId)]);
-    const list = contacts
-      .filter((c) => !q || (c.name || '').toLowerCase().includes(q) || (digits && c.phone.includes(digits)))
-      .map((c) => ({ ...c, purchase: profiles.get(c.id) || NO_PURCHASES }));
+    const list = (await repos.contacts.search({ restaurantId: restaurantId || null, tag, status, filters: queryFilters(req.query.filters) }))
+      .filter((c) => !q || (c.name || '').toLowerCase().includes(q) || (digits && c.phone.includes(digits)));
     list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     res.json(list);
   }));
 
   router.get('/contacts/tags', wrap(async (req, res) => {
     res.json(await repos.contacts.tagCounts(req.query.restaurantId));
+  }));
+
+  // Opções dos filtros de compra: bairros e itens, com quantos clientes cada um tem
+  router.get('/contacts/facets', wrap(async (req, res) => {
+    res.json(await repos.contacts.facets(req.query.restaurantId || null));
+  }));
+
+  // Ficha do cliente: perfil de compra, itens preferidos, pedidos e campanhas recebidas
+  router.get('/contacts/:id', wrap(async (req, res) => {
+    const found = await repos.contacts.get(req.params.id);
+    if (!found) throw notFound('Contato não encontrado');
+    const [[contact], orders, topItems, messages, restaurant] = await Promise.all([
+      repos.contacts.search({ restaurantId: found.restaurantId, id: found.id }),
+      repos.orders.byContact(found.id),
+      repos.orders.topItemsOfContact(found.id),
+      repos.messages.byContact(found.id),
+      repos.restaurants.get(found.restaurantId),
+    ]);
+    const p = contact.purchase;
+    res.json({
+      ...contact,
+      restaurant: restaurant?.name || '—',
+      profile: {
+        ...p,
+        ticket: p.orders ? Math.round((p.total / p.orders) * 100) / 100 : 0,
+        daysSinceLast: p.lastAt ? Math.floor((Date.now() - new Date(p.lastAt).getTime()) / 864e5) : null,
+        neighborhood: contact.neighborhood || p.lastNeighborhood || null,
+      },
+      topItems,
+      orders: orders.map((o) => ({ ...o, trackingUrl: orderService.trackingUrl(o) })),
+      messages,
+    });
   }));
 
   const contactPayload = (body) => {
@@ -368,7 +404,11 @@ function createApi(container) {
 
   const normalizeCampaign = (body) => {
     const data = pick(body || {}, CAMPAIGN_FIELDS);
-    if (data.segment) data.segment = { tags: cleanTags(data.segment.tags), match: data.segment.match === 'all' ? 'all' : 'any' };
+    if (data.segment) {
+      // Filtros de compra só entram quando há algum: campanha sem filtro fica como antes ({ tags, match })
+      const filters = audienceFilters.normalize(data.segment.filters);
+      data.segment = { tags: cleanTags(data.segment.tags), match: data.segment.match === 'all' ? 'all' : 'any', ...(audienceFilters.isEmpty(filters) ? {} : { filters }) };
+    }
     if (data.cloudTemplate) {
       data.cloudTemplate = data.cloudTemplate.name
         ? { name: String(data.cloudTemplate.name).trim(), language: data.cloudTemplate.language || 'pt_BR', params: (data.cloudTemplate.params || []).filter((p) => p !== '') }
@@ -437,7 +477,7 @@ function createApi(container) {
 
   router.post('/audience/preview', wrap(async (req, res) => {
     const { restaurantId, segment } = req.body || {};
-    const list = await dispatch.audience(restaurantId, { tags: cleanTags(segment?.tags), match: segment?.match });
+    const list = await dispatch.audience(restaurantId, { tags: cleanTags(segment?.tags), match: segment?.match, filters: audienceFilters.normalize(segment?.filters) });
     res.json({ count: list.length, sample: list.slice(0, 5).map((c) => ({ name: c.name, phone: c.phone })) });
   }));
 

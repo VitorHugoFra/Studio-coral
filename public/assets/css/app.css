@@ -228,3 +228,20 @@
 .bday-fields { display: grid; grid-template-columns: 76px 1fr 76px; gap: 6px; }
 @media (max-width: 1080px) { .board { grid-template-columns: minmax(0, 1fr); } .board-list { max-height: none; } }
 @media (max-width: 640px) { .import-nums { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ── Filtros de compra e ficha do cliente ─────────────────── */
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--sand-2); }
+.contact-link { color: inherit; font-weight: 600; text-decoration: none; }
+.contact-link:hover { color: var(--brown); text-decoration: underline; }
+.filters-form { display: grid; gap: 14px; }
+.filters-form fieldset { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 14px 12px; margin: 0; display: grid; gap: 12px; min-width: 0; }
+.filters-form legend { font-weight: 700; color: var(--green); padding: 0 6px; font-size: 14px; }
+.range { display: flex; gap: 8px; align-items: center; }
+.range .input { min-width: 0; }
+.range span { color: var(--muted); font-size: 13px; }
+.facet-list { max-height: 132px; overflow: auto; }
+.profile-page { grid-template-columns: minmax(0, 1fr); }
+.profile-head { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.profile-stats { margin-bottom: 0; }
+.profile-stats .value { font-size: 24px; }
+@media (max-width: 640px) { .range { flex-wrap: wrap; } }
