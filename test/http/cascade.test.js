@@ -19,7 +19,7 @@ describe('exclusões em cascata', () => {
     return { campaign: c, message: m };
   }
 
-  it('excluir campanha apaga as mensagens e os pedidos dela', async () => {
+  it('excluir campanha apaga as mensagens e mantém os pedidos dela, sem a campanha', async () => {
     const r = (await ctx.agency.post('/api/restaurants', { name: 'Casa Um', requireApproval: false })).data;
     const { campaign, message } = await completedCampaign(r, 1);
     assert.equal((await ctx.agency.get(`/api/dashboard?restaurantId=${r.id}`)).data.totals.orders, 1);
@@ -27,10 +27,13 @@ describe('exclusões em cascata', () => {
     assert.equal((await ctx.agency.get(`/api/campaigns/${campaign.id}`)).status, 404);
     assert.equal(await location(message.code), '/');
     const d = (await ctx.agency.get(`/api/dashboard?restaurantId=${r.id}`)).data;
-    assert.equal(d.totals.orders, 0);
+    assert.equal(d.totals.orders, 0, 'o pedido deixa de contar nas campanhas');
     assert.equal(d.totals.audience, 0);
-    // o número do pedido volta a ser aceito, porque o pedido anterior foi apagado junto
-    assert.equal((await ctx.client().post('/api/public/conversions', { restaurantSlug: r.slug, value: 42, orderId: 'PED-1' })).status, 201);
+    // o pedido continua no histórico do restaurante, então o mesmo número segue repetido
+    const [kept] = (await ctx.agency.get(`/api/orders?restaurantId=${r.id}`)).data;
+    assert.equal(kept.orderId, 'PED-1');
+    assert.equal(kept.campaignId, null);
+    assert.deepEqual((await ctx.client().post('/api/public/conversions', { restaurantSlug: r.slug, value: 42, orderId: 'PED-1' })).data, { ok: true, duplicated: true });
   });
 
   it('não exclui restaurante com campanha em andamento', async () => {

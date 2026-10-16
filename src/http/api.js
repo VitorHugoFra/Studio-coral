@@ -4,6 +4,7 @@ const { MessagingProvider } = require('../messaging/MessagingProvider');
 const { CAMPAIGN_IDEAS } = require('../ideas');
 const { AuthService } = require('../services/AuthService');
 const { ReportService } = require('../services/ReportService');
+const input = require('../services/orderInput');
 
 const slugify = (s) => String(s || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -36,6 +37,7 @@ function createApi(container) {
   const reports = container.resolve('reports');
   const pdf = container.resolve('pdf');
   const logger = container.resolve('logger');
+  const orderService = container.resolve('orders');
 
   const router = express.Router();
   // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos.
@@ -66,8 +68,10 @@ function createApi(container) {
    * ficam sempre presos ao restaurante do usuário (ver scopeOf e ownCampaign).
    */
   const RESTAURANT_ROUTES = [
-    ['GET', /^\/(auth\/me|events|dashboard|meta|settings|restaurants|campaigns|reports\/months|reports\/monthly|reports\/monthly\.pdf)$/],
+    ['GET', /^\/(auth\/me|events|dashboard|meta|settings|restaurants|campaigns|orders|reports\/months|reports\/monthly|reports\/monthly\.pdf)$/],
     ['GET', /^\/campaigns\/[^/]+(\/messages)?$/],
+    ['GET', /^\/orders\/[^/]+$/],
+    ['PUT', /^\/orders\/[^/]+\/status$/],
     ['POST', /^\/campaigns\/[^/]+\/(approve|request-changes)$/],
     ['PUT', /^\/me\/password$/],
   ];
@@ -193,12 +197,16 @@ function createApi(container) {
   }));
 
   // ── Contatos (base autorizada) ─────────────────────────────
+  // Perfil de compra calculado na hora a partir dos pedidos (nada é gravado no contato)
+  const NO_PURCHASES = { orders: 0, total: 0, firstAt: null, lastAt: null, lastNeighborhood: null };
   router.get('/contacts', wrap(async (req, res) => {
     const { restaurantId, search = '', tag, status } = req.query;
     const q = String(search).toLowerCase();
     const digits = q.replace(/\D/g, '');
-    const list = (await repos.contacts.listByRestaurant({ restaurantId, tag, status }))
-      .filter((c) => !q || (c.name || '').toLowerCase().includes(q) || (digits && c.phone.includes(digits)));
+    const [contacts, profiles] = await Promise.all([repos.contacts.listByRestaurant({ restaurantId, tag, status }), repos.orders.profiles(restaurantId)]);
+    const list = contacts
+      .filter((c) => !q || (c.name || '').toLowerCase().includes(q) || (digits && c.phone.includes(digits)))
+      .map((c) => ({ ...c, purchase: profiles.get(c.id) || NO_PURCHASES }));
     list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     res.json(list);
   }));
@@ -217,6 +225,8 @@ function createApi(container) {
       optIn: body.optIn !== false,
       optInSource: body.optInSource || 'Cadastro manual',
       notes: body.notes || '',
+      ...input.birthday(body),
+      neighborhood: input.text(body.neighborhood, 80) || null,
     };
   };
 
@@ -276,6 +286,58 @@ function createApi(container) {
   }));
 
   router.delete('/contacts/:id', wrap(async (req, res) => res.json({ ok: await repos.contacts.remove(req.params.id) })));
+
+  // ── Pedidos ────────────────────────────────────────────────
+  const orderViews = async (list) => {
+    const names = new Map((await repos.restaurants.all()).map((r) => [r.id, r.name]));
+    return list.map((o) => ({ ...o, restaurant: names.get(o.restaurantId) || '—', trackingUrl: orderService.trackingUrl(o) }));
+  };
+  const ownOrder = async (req) => {
+    const o = await repos.orders.get(req.params.id);
+    if (!o || (isRestaurant(req) && o.restaurantId !== req.user.restaurantId)) throw notFound('Pedido não encontrado');
+    return o;
+  };
+  /** Dia (AAAA-MM-DD) no fuso do servidor; com end, o início do dia seguinte (período até o fim do dia). */
+  const dayBound = (value, end = false) => {
+    if (!value) return null;
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? input.sheetDate(value) : null;
+    if (!d) throw new Error('Data inválida. Use o formato AAAA-MM-DD.');
+    if (end) d.setDate(d.getDate() + 1);
+    return d.toISOString();
+  };
+
+  router.get('/orders', wrap(async (req, res) => {
+    const { status, source, search, from, to, active, limit } = req.query;
+    const list = await repos.orders.list({
+      restaurantId: scopeOf(req, req.query.restaurantId),
+      status,
+      source,
+      search,
+      from: dayBound(from),
+      to: dayBound(to, true),
+      active: active === '1',
+      limit,
+    });
+    res.json(await orderViews(list));
+  }));
+
+  router.get('/orders/:id', wrap(async (req, res) => res.json((await orderViews([await ownOrder(req)]))[0])));
+
+  router.put('/orders/:id/status', wrap(async (req, res) => {
+    const saved = await orderService.changeStatus(await ownOrder(req), String(req.body?.status || ''), req.user);
+    res.json((await orderViews([saved]))[0]);
+  }));
+
+  // Importação de planilha (só a agência): a prévia valida sem gravar; a importação grava o que a prévia mostrou
+  router.post('/orders/import/preview', wrap(async (req, res) => {
+    const { restaurantId, rows } = req.body || {};
+    res.json(await orderService.previewImport({ restaurantId, rows }));
+  }));
+
+  router.post('/orders/import', wrap(async (req, res) => {
+    const { restaurantId, rows, channel, consent } = req.body || {};
+    res.json(await orderService.runImport({ restaurantId, rows, channel, consent: consent === true }));
+  }));
 
   // ── Campanhas ──────────────────────────────────────────────
   const campaignViews = async (list) => {
@@ -357,7 +419,7 @@ function createApi(container) {
   router.delete('/campaigns/:id', wrap(async (req, res) => {
     const c = await repos.campaigns.get(req.params.id);
     if (c && ['sending', 'paused'].includes(c.status)) throw new Error('Cancele a campanha antes de excluí-la.');
-    // Mensagens e pedidos da campanha saem junto (ON DELETE CASCADE)
+    // As mensagens saem junto (ON DELETE CASCADE); os pedidos ficam, sem a campanha (são vendas do restaurante)
     await repos.campaigns.remove(req.params.id);
     res.json({ ok: true });
   }));

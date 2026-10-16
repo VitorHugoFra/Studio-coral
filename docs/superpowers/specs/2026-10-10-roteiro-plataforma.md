@@ -13,8 +13,8 @@ Registro das decisões tomadas com o Vitor antes de começar. Cada etapa tem o p
 
 | # | Etapa | Depende de | Situação |
 |---|---|---|---|
-| 1 | Banco de dados: tudo o que está no `data/db.json` passa para o PostgreSQL | — | desenho aprovado |
-| 2 | Pedidos e perfil de compra do cliente final, painel de pedidos do restaurante | 1 | a desenhar (rascunho abaixo) |
+| 1 | Banco de dados: tudo o que está no `data/db.json` passa para o PostgreSQL | — | concluída |
+| 2 | Pedidos e perfil de compra do cliente final, painel de pedidos do restaurante | 1 | implementada, aguardando conferência ([desenho](2026-10-16-etapa-2-pedidos-design.md)) |
 | 3 | Filtros de público, ficha do cliente e relatórios | 2 | a desenhar |
 | 4 | Indicação com desconto | 2 | a desenhar (decisões abaixo) |
 | 5 | Pagamento online pelo site (Asaas) | 2 | a desenhar (decisões abaixo) |
@@ -67,5 +67,5 @@ Pedidos pelo Vitor: última compra (data e dias desde), quantidade de pedidos, a
 
 ## Acréscimos ao roteiro (2026-10-13)
 - **Criação de contas:** tela para cadastrar acessos (agência cria restaurantes e usuários; restaurante convida a equipe), com troca e recuperação de senha. Hoje não há como criar login pela interface.
-- **Acompanhar pedido (cliente final):** página/link onde o cliente vê o status do pedido feito pelo site (recebido, em preparo, saiu para entrega, entregue). Entra na Etapa 2, junto com o painel de pedidos.
-- **Mais informações no pedido:** pedir no checkout os dados que os filtros e a nota precisam: nome, telefone, CPF (opcional, para a NFe), endereço com bairro, data de aniversário e observações. Entra na Etapa 2.
+- **Acompanhar pedido (cliente final):** página/link onde o cliente vê o status do pedido feito pelo site (recebido, em preparo, saiu para entrega, entregue). Entra na Etapa 2, junto com o painel de pedidos. *Feito na etapa 2 (`/pedido/:codigo`).*
+- **Mais informações no pedido:** pedir no checkout os dados que os filtros e a nota precisam: nome, telefone, CPF (opcional, para a NFe), endereço com bairro, data de aniversário e observações. Entra na Etapa 2. *Feito na etapa 2.*

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>Acompanhe seu pedido</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Solway:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <script defer src="/vendor/alpine.js"></script>
+  <style>
+    /* Acompanhamento do pedido pelo cliente final: mesma coluna e cores do cardápio do restaurante. */
+    :root { --c: #73350c; --txt: #2b2b2b; --sub: #6f6f6f; --bg: #f2f2f2; }
+    body { background: var(--bg); font-family: 'Open Sans', system-ui, sans-serif; color: var(--txt); font-size: 15px; }
+    .app { max-width: 600px; margin: 0 auto; background: #fff; min-height: 100vh; box-shadow: 0 0 0 1px #e6e6e6; }
+    .top { height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px; border-bottom: 1px solid #eee; font-family: var(--font); font-weight: 700; font-size: 15px; letter-spacing: .02em; }
+    .top .m { width: 30px; height: 30px; border-radius: 50%; background: var(--c); color: #fff; display: grid; place-items: center; font-size: 12px; }
+    .hero { padding: 26px 18px 20px; text-align: center; display: grid; gap: 6px; }
+    .hero .num { font-size: 13px; color: var(--sub); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .hero h1 { font-family: 'Open Sans', sans-serif; font-size: 24px; letter-spacing: 0; color: var(--txt); }
+    .hero p { margin: 0; color: var(--sub); }
+    .hero.canceled h1 { color: #a3301b; }
+
+    .steps { list-style: none; margin: 0; padding: 4px 22px 18px; display: grid; }
+    .steps li { display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: start; position: relative; padding-bottom: 20px; }
+    .steps li:last-child { padding-bottom: 0; }
+    .steps li::before { content: ''; position: absolute; left: 12px; top: 24px; bottom: -2px; width: 2px; background: #e3e3e3; }
+    .steps li:last-child::before { display: none; }
+    .steps li.done::before { background: var(--c); }
+    .dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #d5d5d5; background: #fff; display: grid; place-items: center; color: #fff; font-size: 13px; position: relative; z-index: 1; }
+    .steps li.done .dot { background: var(--c); border-color: var(--c); }
+    .steps li.now .dot { border-color: var(--c); box-shadow: 0 0 0 5px color-mix(in srgb, var(--c) 16%, transparent); }
+    .steps li.now .dot::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+    .steps b { display: block; font-weight: 600; padding-top: 2px; }
+    .steps li:not(.done):not(.now) b { color: #9a9a9a; font-weight: 400; }
+    .steps time { color: var(--sub); font-size: 13px; padding-top: 3px; }
+
+    .box { margin: 0 14px 14px; border: 1px solid #ececec; border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; }
+    .box h2 { font-family: 'Open Sans', sans-serif; font-size: 15px; letter-spacing: 0; }
+    .line { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+    .line .note { color: var(--sub); font-size: 12.5px; }
+    .total { border-top: 1px solid #eee; padding-top: 8px; font-weight: 700; }
+    .foot { text-align: center; color: #9a9a9a; font-size: 12px; padding: 6px 16px 28px; display: grid; gap: 12px; justify-items: center; }
+    .back { display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--c); color: #fff; font-weight: 700; padding: 12px 20px; text-decoration: none; }
+    .empty { min-height: 70vh; display: grid; place-items: center; text-align: center; color: var(--sub); padding: 24px; }
+  </style>
+</head>
+<body x-data="tracking" x-cloak :style="`--c:${o?.restaurant.color || '#73350c'}`">
+  <div class="app">
+    <template x-if="o">
+      <div>
+        <header class="top"><span class="m" x-text="initials"></span><span x-text="o.restaurant.name"></span></header>
+
+        <section class="hero" :class="{ canceled: o.status === 'canceled' }">
+          <span class="num" x-text="o.number ? `Pedido #${o.number}` : 'Seu pedido'"></span>
+          <h1 x-text="headline"></h1>
+          <p x-text="subline"></p>
+        </section>
+
+        <template x-if="o.status !== 'canceled'">
+          <ol class="steps" aria-label="Andamento do pedido">
+            <template x-for="(s, i) in steps" :key="s.status">
+              <li :class="{ done: i < current || o.status === 'completed', now: i === current && o.status !== 'completed' }">
+                <span class="dot" aria-hidden="true" x-text="i < current || o.status === 'completed' ? '✓' : ''"></span>
+                <b x-text="s.label"></b>
+                <time x-text="timeOf(s.status)"></time>
+              </li>
+            </template>
+          </ol>
+        </template>
+
+        <div class="box">
+          <h2>Itens</h2>
+          <template x-for="(it, i) in o.items" :key="i">
+            <div class="line"><div><span x-text="`${it.qty}× ${it.name}`"></span><div class="note" x-show="it.note" x-text="`Obs.: ${it.note}`"></div></div><span x-text="money(it.qty * it.price)"></span></div>
+          </template>
+          <div class="line" x-show="o.discount"><span x-text="o.coupon ? `Cupom ${o.coupon}` : 'Desconto'"></span><span x-text="'− ' + money(o.discount)"></span></div>
+          <div class="line total"><span>Total</span><span x-text="money(o.total)"></span></div>
+        </div>
+
+        <footer class="foot">
+          <a class="back" :href="`/demo/${o.restaurant.slug}`">Voltar ao cardápio</a>
+          <span x-show="!finished" x-text="`Esta página se atualiza sozinha. Última consulta às ${checkedAt}.`"></span>
+        </footer>
+      </div>
+    </template>
+
+    <template x-if="missing"><div class="empty"><div><p><b>Pedido não encontrado.</b></p><p>Confira o link que você recebeu.</p></div></div></template>
+  </div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  // Rótulos para o cliente final: na retirada, o terceiro passo é "pronto para retirar"
+  const LABELS = {
+    delivery: { new: 'Pedido recebido', preparing: 'Em preparo', dispatched: 'Saiu para entrega', completed: 'Entregue' },
+    pickup: { new: 'Pedido recebido', preparing: 'Em preparo', dispatched: 'Pronto para retirar', completed: 'Retirado' },
+  };
+  const ORDER = ['new', 'preparing', 'dispatched', 'completed'];
+
+  Alpine.data('tracking', () => ({
+    o: null, missing: false, checkedAt: '', timer: null,
+
+    async init() {
+      await this.load();
+      if (this.o && !this.finished) this.timer = setInterval(() => this.load(), 15000);
+    },
+
+    async load() {
+      const code = location.pathname.split('/').filter(Boolean).pop();
+      try {
+        const res = await fetch(`/api/public/orders/${encodeURIComponent(code)}`, { cache: 'no-store' });
+        if (res.status === 404) { this.missing = true; this.o = null; return; }
+        if (!res.ok) return; // falha passageira: tenta de novo na próxima consulta
+        this.o = await res.json();
+        this.checkedAt = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        document.title = `${this.headline} · ${this.o.restaurant.name}`;
+        if (this.finished) clearInterval(this.timer);
+      } catch { /* sem conexão: tenta de novo na próxima consulta */ }
+    },
+
+    get labels() { return LABELS[this.o?.fulfillment === 'pickup' ? 'pickup' : 'delivery']; },
+    get steps() { return ORDER.map((status) => ({ status, label: this.labels[status] })); },
+    get current() { return Math.max(0, ORDER.indexOf(this.o.status)); },
+    get finished() { return ['completed', 'canceled'].includes(this.o?.status); },
+    get initials() { return this.o.restaurant.name.split(/\s+/).filter((w) => w.length > 2).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); },
+
+    get headline() {
+      if (this.o.status === 'canceled') return 'Pedido cancelado';
+      return this.labels[this.o.status] || 'Pedido recebido';
+    },
+    get subline() {
+      const name = this.o.firstName ? `${this.o.firstName}, ` : '';
+      if (this.o.status === 'canceled') return `${name}fale com o restaurante${this.o.restaurant.phone ? ` pelo ${this.o.restaurant.phone}` : ''} para saber mais.`;
+      if (this.o.status === 'completed') return `${name}obrigado pela preferência!`;
+      if (this.o.status === 'dispatched') return this.o.fulfillment === 'pickup' ? `${name}seu pedido está esperando no balcão.` : `${name}seu pedido está a caminho${this.o.neighborhood ? ` (${this.o.neighborhood})` : ''}.`;
+      if (this.o.status === 'preparing') return `${name}a cozinha já está preparando seu pedido.`;
+      return `${name}o restaurante recebeu seu pedido e logo começa o preparo.`;
+    },
+    timeOf(status) {
+      const entry = (this.o.statusLog || []).filter((e) => e.status === status).pop();
+      return entry ? new Date(entry.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    },
+    money: (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+  }));
+});
+</script>
+</body>
+</html>

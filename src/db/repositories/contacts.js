@@ -4,7 +4,7 @@ const { MessagingProvider } = require('../../messaging/MessagingProvider');
 
 const table = defineTable({
   name: 'contacts',
-  columns: ['restaurantId', 'name', 'phone', 'tags', 'optIn', 'optInSource', 'optedOut', 'optedOutAt', 'notes', 'demo'],
+  columns: ['restaurantId', 'name', 'phone', 'tags', 'optIn', 'optInSource', 'optedOut', 'optedOutAt', 'notes', 'demo', 'birthDay', 'birthMonth', 'birthYear', 'neighborhood'],
   hidden: ['phoneKey', 'seq'],
   unique: { contacts_restaurant_phone: 'Este telefone já está na base.' },
 });
@@ -40,6 +40,17 @@ class ContactsRepo extends Repository {
   async findByPhone(restaurantId, phone) {
     if (!isUuid(restaurantId)) return null;
     return this.first('restaurant_id = $1 AND phone = $2', [restaurantId, phone]);
+  }
+
+  /** O cliente do restaurante pelo telefone, mesmo escrito de outro jeito (com ou sem o 9º dígito). */
+  async findByPhoneKey(restaurantId, phone) {
+    if (!isUuid(restaurantId)) return null;
+    return this.first('restaurant_id = $1 AND phone_key = $2', [restaurantId, MessagingProvider.phoneKey(phone)], 'seq');
+  }
+
+  /** Cria o contato; se o telefone já estiver no restaurante (outro pedido ao mesmo tempo), devolve null. */
+  createIfAbsent(data) {
+    return this.create(data, { onConflict: 'ON CONFLICT (restaurant_id, phone) DO NOTHING' });
   }
 
   /** O mesmo cliente em qualquer restaurante (respostas como "SAIR"). */

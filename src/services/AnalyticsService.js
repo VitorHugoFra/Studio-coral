@@ -15,7 +15,7 @@ const seriesStart = (days) => {
 
 /**
  * Etapa 8 do fluxo — Análise. Indicadores de desempenho das campanhas.
- * As regras de contagem ficam no SQL (messages.summary e conversions.summary);
+ * As regras de contagem ficam no SQL (messages.summary e orders.summary);
  * aqui se calculam as taxas e se montam as séries diárias.
  */
 class AnalyticsService {
@@ -46,7 +46,7 @@ class AnalyticsService {
   async statsForCampaigns(ids) {
     const [counts, sales] = await Promise.all([
       this.repos.messages.summaryByCampaign(ids),
-      this.repos.conversions.summaryByCampaign(ids),
+      this.repos.orders.summaryByCampaign(ids),
     ]);
     return new Map(ids.map((id) => [id, AnalyticsService.withRates(counts.get(id), sales.get(id))]));
   }
@@ -57,11 +57,11 @@ class AnalyticsService {
     // Só entram pedidos atribuídos a campanhas (vindos de um link rastreável)
     const [counts, sales, timeline, orders, launched, recent, base, campaignCounts, restaurants] = await Promise.all([
       this.repos.messages.summary({ restaurantId: scope }),
-      this.repos.conversions.summary({ restaurantId: scope, attributedOnly: true }),
+      this.repos.orders.summary({ restaurantId: scope, attributedOnly: true }),
       this.repos.messages.timelineSince({ restaurantId: scope, since }),
-      this.repos.conversions.attributedSince({ restaurantId: scope, since }),
+      this.repos.orders.attributedSince({ restaurantId: scope, since }),
       this.repos.campaigns.launched(scope),
-      this.repos.conversions.recentAttributed({ restaurantId: scope, limit: 6 }),
+      this.repos.orders.recentAttributed({ restaurantId: scope, limit: 6 }),
       this.repos.contacts.stats({ restaurantId: scope }),
       this.repos.campaigns.counts(scope),
       this.repos.restaurants.all(),

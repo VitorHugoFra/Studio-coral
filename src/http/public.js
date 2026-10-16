@@ -6,9 +6,12 @@ const BOT_UA = /whatsapp|facebookexternalhit|facebot|bot|crawler|spider|preview|
 /**
  * Rotas públicas:
  *  • /r/:code                 → link rastreável (etapa 6 — Conversão)
- *  • /api/public/conversions  → registro de pedido (etapa 7 — Compra)
+ *  • /api/public/orders       → pedido feito no site de demonstração (checkout)
+ *  • /api/public/orders/:code → andamento do pedido, para a página /pedido/:code
+ *  • /api/public/conversions  → pedido informado por um site externo (etapa 7 — Compra)
  *  • /t.js                    → script de conversão para o site do restaurante
  *  • /demo/:slug              → site próprio de demonstração do restaurante
+ *  • /pedido/:code            → acompanhamento do pedido pelo cliente final
  *  • /webhooks/whatsapp       → webhook da API Oficial (status e respostas)
  */
 function createPublicRoutes(container) {
@@ -17,6 +20,7 @@ function createPublicRoutes(container) {
   const events = container.resolve('events');
   const messaging = container.resolve('messaging');
   const config = container.resolve('config');
+  const orders = container.resolve('orders');
 
   const router = express.Router();
   const publicDir = path.join(__dirname, '..', '..', 'public');
@@ -51,32 +55,48 @@ function createPublicRoutes(container) {
     return res.redirect(302, destination.toString());
   }));
 
-  // ── Conversões ─────────────────────────────────────────────
-  router.options('/api/public/conversions', cors);
-  router.post('/api/public/conversions', cors, wrap(async (req, res) => {
-    const { ref, value, orderId, items, restaurantSlug, customerName } = req.body || {};
-    const message = ref ? await repos.messages.byCode(String(ref)) : null;
-    const restaurant = message
-      ? await repos.restaurants.get(message.restaurantId)
-      : await repos.restaurants.bySlug(String(restaurantSlug || ''));
-    if (!restaurant) return res.status(404).json({ error: 'Referência ou restaurante não encontrado.' });
+  // Erros de validação (400) e "não encontrado" (404) com a mensagem; o resto segue para o tratador final
+  const userError = (fn) => wrap(async (req, res) => {
+    try {
+      return await fn(req, res);
+    } catch (err) {
+      if (err.status === 400 || err.status === 404) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+  });
 
-    // Número de pedido repetido no restaurante é ignorado (índice único, sem corrida)
-    const conversion = await repos.conversions.createUnique({
-      restaurantId: restaurant.id,
-      campaignId: message?.campaignId || null,
-      messageId: message?.id || null,
-      contactId: message?.contactId || null,
-      code: message?.code || null,
-      customerName: customerName || message?.name || null,
-      orderId: orderId ? String(orderId) : null,
-      value: Math.min(Math.max(0, Number(value) || 0), 9999999999.99), // limite do numeric(12,2) do banco
-      items: Array.isArray(items) ? items.slice(0, 50) : [],
+  // ── Pedidos ────────────────────────────────────────────────
+  router.post('/api/public/orders', userError(async (req, res) => {
+    const { order, duplicated } = await orders.placeSiteOrder(req.body || {});
+    return res.status(duplicated ? 200 : 201).json({
+      ok: true,
+      ...(duplicated ? { duplicated: true } : {}),
+      id: order.id,
+      number: order.number,
+      trackingCode: order.trackingCode,
+      trackingUrl: orders.trackingUrl(order),
+      subtotal: order.subtotal,
+      discount: order.discount,
+      total: order.value,
     });
-    if (!conversion) return res.json({ ok: true, duplicated: true });
-    if (message && !message.convertedAt) await repos.messages.markConverted(message.id, conversion.createdAt);
-    events.publish('conversion', { ...conversion, restaurant: restaurant.name });
-    return res.status(201).json({ ok: true, id: conversion.id });
+  }));
+
+  router.get('/api/public/orders/:code', wrap(async (req, res) => {
+    const order = await repos.orders.byTrackingCode(req.params.code);
+    const restaurant = order && await repos.restaurants.get(order.restaurantId);
+    if (!order || !restaurant) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(orders.trackingView(order, restaurant));
+  }));
+
+  router.get('/pedido/:code', (req, res) => res.sendFile(path.join(publicDir, 'pedido.html')));
+
+  // ── Pedidos de sites externos (script /t.js) ───────────────
+  router.options('/api/public/conversions', cors);
+  router.post('/api/public/conversions', cors, userError(async (req, res) => {
+    const order = await orders.recordConversion(req.body || {});
+    if (!order) return res.json({ ok: true, duplicated: true });
+    return res.status(201).json({ ok: true, id: order.id });
   }));
 
   router.get('/api/public/restaurants/:slug', cors, wrap(async (req, res) => {
