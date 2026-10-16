@@ -42,7 +42,7 @@ class ReportService {
     const to = end.toISOString();
     const [counts, sales] = await Promise.all([
       this.repos.messages.summary({ restaurantId, sentFrom: from, sentTo: to }),
-      this.repos.conversions.summary({ restaurantId, attributedOnly: true, from, to }),
+      this.repos.orders.summary({ restaurantId, attributedOnly: true, from, to }),
     ]);
     return { summary: AnalyticsService.withRates(counts, sales), start, end, from, to };
   }
@@ -57,11 +57,16 @@ class ReportService {
     const s = cur.summary;
     const inMonth = (iso) => iso && new Date(iso) >= cur.start && new Date(iso) < cur.end;
 
-    const [sent, orders, started, base] = await Promise.all([
+    // Vendas de todas as origens (página 3): a reativação olha o fim do mês, ou agora se o mês não acabou
+    const prevRange = monthRange(shift(month, -1));
+    const ref = new Date(Math.min(cur.end.getTime(), Date.now())).toISOString();
+    const [sent, orders, started, base, sales, prevSales] = await Promise.all([
       this.repos.messages.sentBetween(restaurantId, cur.from, cur.to),
-      this.repos.conversions.attributedBetween(restaurantId, cur.from, cur.to),
+      this.repos.orders.attributedBetween(restaurantId, cur.from, cur.to),
       this.repos.campaigns.startedBetween(restaurantId, cur.from, cur.to),
       this.repos.contacts.stats({ restaurantId, from: cur.from, to: cur.to }),
+      this.repos.orders.monthSales(restaurantId, cur.from, cur.to, ref),
+      this.repos.orders.monthSales(restaurantId, prevRange.start.toISOString(), prevRange.end.toISOString()),
     ]);
 
     // Dia a dia
@@ -111,6 +116,13 @@ class ReportService {
       bestWeekday: bestDay && bestDay.orders ? bestDay : null,
       topItems: Object.values(items).sort((a, b) => b.qty - a.qty).slice(0, 6),
       base: { authorized: base.authorized, newThisMonth: base.createdInRange, optOutsThisMonth: base.optedOutInRange },
+      sales: {
+        ...sales,
+        revenue: Math.round(sales.revenue * 100) / 100,
+        ticket: sales.orders ? Math.round((sales.revenue / sales.orders) * 100) / 100 : 0,
+        previous: { orders: prevSales.orders, revenue: Math.round(prevSales.revenue * 100) / 100 },
+        change: { orders: variation(sales.orders, prevSales.orders), revenue: variation(sales.revenue, prevSales.revenue) },
+      },
     };
   }
 }

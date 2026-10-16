@@ -5,6 +5,7 @@ const table = defineTable({
   name: 'restaurants',
   columns: ['name', 'slug', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'logoUrl', 'menu', 'banners', 'requireApproval', 'demo'],
   json: ['menu', 'banners'],
+  hidden: ['orderSeq'],
   unique: { restaurants_slug_key: 'Já existe um restaurante com este endereço.' },
 });
 
@@ -20,6 +21,15 @@ class RestaurantsRepo extends Repository {
   async slugTaken(slug, ignoreId = null) {
     const row = await this.db.one('SELECT 1 FROM restaurants WHERE slug = $1 AND ($2::uuid IS NULL OR id <> $2::uuid)', [slug, isUuid(ignoreId) ? ignoreId : null]);
     return !!row;
+  }
+
+  /**
+   * Próximo número de pedido do site (#1, #2…). O UPDATE é atômico e trava a linha do restaurante até o fim da
+   * transação: dois pedidos ao mesmo tempo nunca recebem o mesmo número.
+   */
+  async nextOrderNumber(id) {
+    if (!isUuid(id)) return null;
+    return (await this.db.one('UPDATE restaurants SET order_seq = order_seq + 1 WHERE id = $1 RETURNING order_seq', [id]))?.order_seq ?? null;
   }
 
   /** Contagens da lista de restaurantes: contatos, autorizados e campanhas. */

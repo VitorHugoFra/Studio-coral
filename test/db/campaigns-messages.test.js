@@ -182,23 +182,23 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
   it('pedidos: repetido no restaurante é ignorado; totais e listas', async () => {
     const { restaurant } = await fresh();
     const c = await repos.campaigns.create({ restaurantId: restaurant.id, name: 'Vendas', status: 'completed' });
-    const first = await repos.conversions.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId: 'P-1', value: 10.1, items: [{ name: 'A', qty: 1, price: 10.1 }] });
+    const first = await repos.orders.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId: 'P-1', value: 10.1, items: [{ name: 'A', qty: 1, price: 10.1 }] });
     assert.equal(first.value, 10.1);
     assert.deepEqual(first.items, [{ name: 'A', qty: 1, price: 10.1 }]);
-    assert.equal(await repos.conversions.createUnique({ restaurantId: restaurant.id, orderId: 'P-1', value: 99 }), null);
+    assert.equal(await repos.orders.createUnique({ restaurantId: restaurant.id, orderId: 'P-1', value: 99 }), null);
     await pause();
-    await repos.conversions.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId: 'P-2', value: 20.2 });
-    await repos.conversions.createUnique({ restaurantId: restaurant.id, value: 5 });
-    await repos.conversions.createUnique({ restaurantId: restaurant.id, value: 5 }); // sem número: nunca é repetido
+    await repos.orders.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId: 'P-2', value: 20.2 });
+    await repos.orders.createUnique({ restaurantId: restaurant.id, value: 5 });
+    await repos.orders.createUnique({ restaurantId: restaurant.id, value: 5 }); // sem número: nunca é repetido
 
-    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id }), { orders: 4, revenue: 40.3 });
-    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id, attributedOnly: true }), { orders: 2, revenue: 30.3 });
-    assert.deepEqual(await repos.conversions.summary({ campaignId: c.id }), { orders: 2, revenue: 30.3 });
-    assert.deepEqual(await repos.conversions.summary({ restaurantId: 'xyz' }), { orders: 0, revenue: 0 });
-    assert.deepEqual((await repos.conversions.summaryByCampaign([c.id])).get(c.id), { orders: 2, revenue: 30.3 });
-    assert.deepEqual((await repos.conversions.recentAttributed({ restaurantId: restaurant.id, limit: 1 })).map((x) => x.orderId), ['P-2']);
-    assert.equal((await repos.conversions.attributedSince({ restaurantId: restaurant.id, since: at(-60000) })).length, 2);
-    assert.equal((await repos.conversions.attributedBetween(restaurant.id, at(-60000), at(60000))).length, 2);
+    assert.deepEqual(await repos.orders.summary({ restaurantId: restaurant.id }), { orders: 4, revenue: 40.3 });
+    assert.deepEqual(await repos.orders.summary({ restaurantId: restaurant.id, attributedOnly: true }), { orders: 2, revenue: 30.3 });
+    assert.deepEqual(await repos.orders.summary({ campaignId: c.id }), { orders: 2, revenue: 30.3 });
+    assert.deepEqual(await repos.orders.summary({ restaurantId: 'xyz' }), { orders: 0, revenue: 0 });
+    assert.deepEqual((await repos.orders.summaryByCampaign([c.id])).get(c.id), { orders: 2, revenue: 30.3 });
+    assert.deepEqual((await repos.orders.recentAttributed({ restaurantId: restaurant.id, limit: 1 })).map((x) => x.orderId), ['P-2']);
+    assert.equal((await repos.orders.attributedSince({ restaurantId: restaurant.id, since: at(-60000) })).length, 2);
+    assert.equal((await repos.orders.attributedBetween(restaurant.id, at(-60000), at(60000))).length, 2);
   });
 
   it('pedidos: o período é [de, até), incluindo o início e excluindo o fim', async () => {
@@ -206,26 +206,32 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
     const c = await repos.campaigns.create({ restaurantId: restaurant.id, name: 'Período', status: 'completed' });
     const from = '2026-05-01T00:00:00.000Z';
     const to = '2026-06-01T00:00:00.000Z';
-    const order = (orderId, createdAt, value) => repos.conversions.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId, value, createdAt });
+    const order = (orderId, createdAt, value) => repos.orders.createUnique({ restaurantId: restaurant.id, campaignId: c.id, orderId, value, createdAt });
     await order('B-1', '2026-04-30T23:59:59.999Z', 99); // um instante antes do período
     await order('B-2', from, 10.1); // exatamente no início: conta
     await order('B-3', '2026-05-15T12:00:00.000Z', 20.2);
     await order('B-4', to, 5); // exatamente no fim: não conta
-    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id, from, to }), { orders: 2, revenue: 30.3 });
-    assert.deepEqual((await repos.conversions.attributedBetween(restaurant.id, from, to)).map((x) => x.orderId), ['B-2', 'B-3']);
-    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id }), { orders: 4, revenue: 134.3 });
+    assert.deepEqual(await repos.orders.summary({ restaurantId: restaurant.id, from, to }), { orders: 2, revenue: 30.3 });
+    assert.deepEqual((await repos.orders.attributedBetween(restaurant.id, from, to)).map((x) => x.orderId), ['B-2', 'B-3']);
+    assert.deepEqual(await repos.orders.summary({ restaurantId: restaurant.id }), { orders: 4, revenue: 134.3 });
   });
 
-  it('excluir campanha apaga mensagens e pedidos; excluir contato mantém a mensagem', async () => {
+  it('excluir campanha apaga as mensagens e mantém os pedidos, sem a campanha; excluir contato mantém a mensagem', async () => {
     const { restaurant, contacts } = await fresh();
     const c = await repos.campaigns.create({ restaurantId: restaurant.id, name: 'Apagar', status: 'completed' });
     const [m1, m2] = await queue(c, contacts.slice(0, 2));
-    await repos.conversions.createUnique({ restaurantId: restaurant.id, campaignId: c.id, messageId: m1.id, contactId: contacts[0].id, orderId: 'X-1', value: 1 });
+    await repos.orders.createUnique({ restaurantId: restaurant.id, campaignId: c.id, messageId: m1.id, contactId: contacts[0].id, orderId: 'X-1', value: 1 });
     await repos.contacts.remove(contacts[1].id);
     assert.equal((await repos.messages.get(m2.id)).contactId, null);
     await repos.campaigns.remove(c.id);
     assert.equal(await repos.messages.get(m1.id), null);
-    assert.deepEqual(await repos.conversions.summary({ restaurantId: restaurant.id }), { orders: 0, revenue: 0 });
+    // Pedido é venda do restaurante: fica, mas deixa de contar como pedido de campanha
+    assert.deepEqual(await repos.orders.summary({ restaurantId: restaurant.id }), { orders: 1, revenue: 1 });
+    assert.deepEqual(await repos.orders.summary({ restaurantId: restaurant.id, attributedOnly: true }), { orders: 0, revenue: 0 });
+    const kept = await repos.orders.findByOrderId(restaurant.id, 'X-1');
+    assert.equal(kept.campaignId, null);
+    assert.equal(kept.messageId, null);
+    assert.equal(kept.contactId, contacts[0].id);
   });
 
   it('transação desfaz tudo quando algo falha', async () => {
@@ -260,8 +266,8 @@ describe('repositórios de campanhas, mensagens e pedidos', () => {
     // dois pedidos no mesmo instante, inseridos na ordem contrária à dos ids
     const ids = ['10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000001'];
     const createdAt = at(-2000);
-    for (const [i, id] of ids.entries()) await repos.conversions.createUnique({ id, restaurantId: restaurant.id, campaignId: c.id, orderId: `E-${i}`, value: 1, createdAt });
-    assert.deepEqual((await repos.conversions.recentAttributed({ restaurantId: restaurant.id, limit: 2 })).map((x) => x.id), [ids[1], ids[0]]);
+    for (const [i, id] of ids.entries()) await repos.orders.createUnique({ id, restaurantId: restaurant.id, campaignId: c.id, orderId: `E-${i}`, value: 1, createdAt });
+    assert.deepEqual((await repos.orders.recentAttributed({ restaurantId: restaurant.id, limit: 2 })).map((x) => x.id), [ids[1], ids[0]]);
   });
 
   // apaga o banco deste arquivo: precisa ser o último teste

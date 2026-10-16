@@ -7,6 +7,7 @@ Protótipo funcional do serviço de **disparo de mensagens de marketing personal
 | Site institucional | `http://localhost:3000/` |
 | Painel da agência | `http://localhost:3000/app` |
 | Site próprio de demonstração do restaurante | `http://localhost:3000/demo/cantina-bella-nonna` |
+| Acompanhamento do pedido (cliente final) | `http://localhost:3000/pedido/:codigo` (o link aparece depois do pedido) |
 
 | Relatório mensal (A4/PDF) | `http://localhost:3000/relatorio?restaurantId=…&month=AAAA-MM` |
 
@@ -48,7 +49,7 @@ Os dados ficam no PostgreSQL.
 - **Sem configurar nada (desenvolvimento):** o sistema usa o **PGlite**, um PostgreSQL embutido, e grava em `data/pgdata`. Não é preciso instalar PostgreSQL. **O PGlite é só para desenvolvimento e testes**: em produção use um PostgreSQL de verdade.
 - **Produção:** defina `DATABASE_URL=postgres://usuario:senha@host:5432/banco` no `.env`. As tabelas são criadas e atualizadas sozinhas ao subir o servidor (pasta `migrations/`). Defina também, no ambiente do servidor, `NODE_ENV=production` e `TZ=America/Sao_Paulo`: os dias e os meses dos relatórios (e a janela de horário de envio) seguem o fuso do servidor.
 - **Vindo da versão com `data/db.json`:** na primeira subida com o banco vazio, o conteúdo do JSON é importado automaticamente, e o arquivo é mantido como cópia. Para importar à mão: `npm run db:import-json -- caminho/do/db.json`. A importação acontece uma vez só: ela deixa uma marca (`legacyImportedAt`) nas configurações, e se o banco ficar vazio de novo (todos os restaurantes excluídos), a próxima subida cria os dados de demonstração em vez de trazer o JSON de volta.
-- `npm run seed` apaga o banco e recria os dados de demonstração. **Com `DATABASE_URL` definida ele se recusa a rodar**, para não apagar um banco de produção por engano. Para confirmar que é isso mesmo, rode `npm run seed -- --force`: apaga TODOS os dados daquele banco.
+- `npm run seed` apaga o banco e recria os dados de demonstração (dois restaurantes, campanhas e cerca de 6 meses de pedidos). **Com `DATABASE_URL` definida ele se recusa a rodar**, para não apagar um banco de produção por engano. Para confirmar que é isso mesmo, rode `npm run seed -- --force`: apaga TODOS os dados daquele banco.
 - Com o PGlite, só um processo usa a pasta por vez: pare o servidor antes de rodar `npm run seed` ou `npm run db:import-json`.
 - **Uma instância do servidor por banco**, também em produção: a fila de disparo, a cópia das configurações e os eventos em tempo real ficam na memória do processo. O servidor garante isso ao subir: trava o banco (um *advisory lock* do PostgreSQL, numa conexão própria, além das do `DATABASE_POOL_MAX`) e, se outra instância já o estiver usando, espera até 30 s (o "para e sobe" de um deploy) e então falha avisando. A trava exige conexão **em modo sessão**: não use um pooler em modo transação, como o do Supabase na porta 6543; use a conexão direta ou o pooler em modo sessão.
 
@@ -67,10 +68,10 @@ Roda a bateria completa com o PostgreSQL embutido e repete os testes HTTP pelo d
 | 1. Diagnóstico | **Restaurantes** → perfil, público, produtos, objetivos, tom de voz e cardápio |
 | 2. Planejamento | **Campanha → Planejamento**: objetivo, ocasião, cupom e destino do link |
 | 3. Criação | **Campanha → Mensagem**: variáveis `{{primeiro_nome}}`, variações `{Oi\|Olá}`, modelos prontos, imagem (upload por arrastar e soltar, galeria das já enviadas) e prévia no WhatsApp |
-| 4. Segmentação | **Campanha → Segmentação**: filtros por tags, somente contatos autorizados |
+| 4. Segmentação | **Campanha → Público**: tags e filtros de compra (última compra, pedidos, gasto, aniversário, bairro, item, dia preferido), somente contatos autorizados |
 | 5. Disparo | Fila com intervalos aleatórios, limite diário, horário comercial, teste, agendamento, pausa e cancelamento |
 | 6. Conversão | Um link único por cliente (`/r/xxxx`), que registra o clique e redireciona com UTMs |
-| 7. Compra | Pedido no site próprio, atribuído à campanha (`/api/public/conversions` ou script `/t.js`) |
+| 7. Compra | Pedido no site próprio (`/api/public/orders`), atribuído à campanha quando vem do link; sites externos informam a venda por `/api/public/conversions` ou pelo script `/t.js` |
 | 8. Análise | Painel e página da campanha com entregas, leituras, cliques, pedidos e receita em tempo real |
 
 LGPD: a importação exige confirmar o consentimento. Quem responde **SAIR** é descadastrado automaticamente e recebe uma confirmação.
@@ -82,7 +83,7 @@ Há três tipos de acesso:
 | Quem | Entra com | O que faz |
 |---|---|---|
 | **Agência** | O login do `.env` (`ADMIN_EMAIL` e `ADMIN_PASSWORD`) | Tudo, em todos os restaurantes. A senha só muda no `.env` |
-| **Gerente** do restaurante | Acesso criado pela agência ou por outro gerente | Painel, aprovação de campanhas e relatórios **só do próprio restaurante**, e a tela **Equipe**, onde convida e remove pessoas, muda papéis e gera links de senha |
+| **Gerente** do restaurante | Acesso criado pela agência ou por outro gerente | Painel, pedidos, aprovação de campanhas e relatórios **só do próprio restaurante**, e a tela **Equipe**, onde convida e remove pessoas, muda papéis e gera links de senha |
 | **Equipe** do restaurante | Acesso criado pela agência ou pelo gerente | O mesmo que o gerente, menos a tela Equipe |
 
 Gerente e equipe não veem contatos, outros restaurantes, conexão nem configurações (bloqueado também na API).
@@ -105,11 +106,48 @@ Fluxo: a agência monta a campanha e clica em **Enviar para aprovação** (passo
 
 ## Relatório mensal em PDF
 
-Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect), a partir da página `/relatorio`, com a sessão de quem pediu.
+Em **Relatórios**, escolha o restaurante e o mês: prévia na tela e botão **Baixar PDF**. O relatório traz números do mês com comparação ao anterior, resumo em texto, gráfico dia a dia, funil, campanhas, itens mais pedidos, melhor dia da semana e evolução da base. A página 3 mostra as **vendas do restaurante** de todos os canais (site, campanhas e planilhas): pedidos, faturamento, ticket médio, clientes novos e que voltaram, vendas por canal, bairros e itens mais vendidos, e quantos clientes estão há mais de 30 dias sem pedir. O PDF é gerado pelo Chrome do Puppeteer (instalado junto com o WPPConnect), a partir da página `/relatorio`, com a sessão de quem pediu.
 
 ## Site de pedidos do restaurante
 
 Layout de cardápio digital (`/demo/:slug`): carrossel de fotos, atalhos por seção, abas fixas por categoria, busca, itens com foto, detalhe com quantidade e observação, sacola. Fotos dos itens e do carrossel são enviadas na ficha do restaurante. As ilustrações dos restaurantes de demonstração são geradas por `node scripts/gerar-ilustracoes.js`.
+
+**Checkout:** nome e WhatsApp (obrigatórios), entrega ou retirada, endereço completo na entrega (o CEP preenche rua, bairro e cidade pelo ViaCEP), CPF (opcional, para a nota fiscal), aniversário (opcional), observações e a caixa "Quero receber as promoções deste restaurante pelo WhatsApp", **desmarcada** por padrão. O servidor recalcula os preços pelo cardápio (com cupom, 10% de desconto) e numera os pedidos por restaurante (#1, #2…). Enviar a mesma sacola de novo não duplica o pedido. O navegador lembra nome, WhatsApp e endereço para o próximo pedido (o CPF não).
+
+**Contato do cliente final:** o pedido cria o contato pelo telefone ou atualiza o que já existe. Ele só fica autorizado a receber mensagens se a caixa for marcada, e um descadastrado nunca volta a ser autorizado pelo pedido. A lista de **Contatos** mostra, calculados na hora a partir dos pedidos, quantos pedidos o cliente fez, quanto gastou e quando foi a última compra; a ficha ganha aniversário e bairro (vazio, vale o do último pedido).
+
+**Acompanhamento:** depois do pedido, o cliente recebe o link `/pedido/:codigo`, que mostra o andamento (recebido, em preparo, saiu para entrega ou pronto para retirar, entregue) e se atualiza sozinho. A página não mostra telefone, CPF nem endereço.
+
+## Filtros de público e ficha do cliente
+
+Os filtros usam o histórico de pedidos (sem os cancelados), calculado na hora:
+
+| Filtro | Exemplo |
+|---|---|
+| Quantidade de pedidos | 5 ou mais; máximo 0 = quem nunca comprou |
+| Total gasto | a partir de R$ 300 |
+| Dias desde a última compra | sem comprar há 30+ dias (quem nunca comprou não entra) ou compraram nos últimos 7 dias |
+| Primeira e última compra | períodos de datas |
+| Aniversário | no mês escolhido ou nos próximos N dias (até 60) |
+| Bairro | o do contato ou, se vazio, o do último pedido |
+| Item | o que o cliente mais pede, ou qualquer item que já pediu |
+| Dia da semana preferido | o dia em que mais pediu |
+
+Todos valem juntos, e junto com as tags. Na campanha, ficam em **Público → Filtrar por compras**, com a contagem de quem recebe atualizando na hora; mudar os filtros zera a aprovação do restaurante, como mudar as tags. Os modelos "Cliente sumido", "Clientes frequentes" e "Aniversariante" já vêm com o filtro certo. Em **Contatos**, o mesmo botão filtra a lista.
+
+Clicar no nome de um contato abre a **ficha do cliente**: pedidos, total gasto, ticket médio, primeira e última compra, dia preferido, o que mais pede, o histórico de pedidos e as campanhas que recebeu (com leitura, clique e pedido). A ficha é só da agência, como a lista de contatos.
+
+## Pedidos (painel)
+
+Em **Pedidos**, agência e restaurante veem os pedidos em tempo real (o restaurante, só os dele):
+
+- **Quadro** com Novos, Em preparo e Saiu para entrega / pronto. Pedido novo chega na hora, com aviso na tela e um som curto. Cada cartão tem o botão do próximo passo; o pedido só avança (pode pular passos) ou é cancelado, e concluído e cancelado são finais. Se duas pessoas mudarem o mesmo pedido ao mesmo tempo, a segunda recebe o aviso para recarregar.
+- **Histórico** com filtros por situação, origem (site, campanha, planilha), período e busca por nome, telefone ou número.
+- **Detalhe** com itens, endereço, WhatsApp, CPF, observações, histórico de status (com quem mudou) e o link de acompanhamento.
+
+**Importar planilha** (só a agência): escolha o restaurante e de onde vêm os pedidos (iFood, caixa ou outro), envie ou cole o CSV e clique em **Conferir planilha**. A prévia mostra quantos pedidos entram, quantos já existiam (mesmo número de pedido), quantos contatos novos serão criados e os erros por linha, sem gravar nada. As colunas são reconhecidas pelo cabeçalho: número do pedido, data, cliente, telefone, total, desconto, bairro e itens (`2x Lasanha; 1 Suco`); número, data e total são obrigatórios. Os contatos novos da planilha só ficam autorizados se a agência confirmar o consentimento.
+
+Excluir uma campanha não apaga mais os pedidos dela: eles ficam no histórico do restaurante, sem a campanha. As métricas das campanhas continuam contando só os pedidos que vieram dos links.
 
 ## Imagens nas campanhas
 

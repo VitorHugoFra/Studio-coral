@@ -45,6 +45,13 @@ const STATUS = { draft: 'Rascunho', scheduled: 'Agendada', sending: 'Enviando', 
 const MSG_STATUS = { queued: 'Na fila', sending: 'Enviando', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falhou', skipped: 'Ignorada' };
 const CONN = { disconnected: 'Desconectado', starting: 'Conectando…', qr: 'Aguardando QR Code', connected: 'Conectado', error: 'Erro' };
 const ROLE = { manager: 'Gerente', staff: 'Equipe' };
+const ORDER_STATUS = { new: 'Novo', preparing: 'Em preparo', dispatched: 'Saiu para entrega', completed: 'Concluído', canceled: 'Cancelado' };
+const ORDER_CLASS = { new: 'sending', preparing: 'scheduled', dispatched: 'delivered', completed: 'completed', canceled: 'failed' };
+const ORDER_SOURCE = { site: 'Site', campaign: 'Campanha', import: 'Planilha', referral: 'Indicação' };
+const ORDER_NEXT = { new: 'preparing', preparing: 'dispatched', dispatched: 'completed' };
+const ORDER_COLUMN_LABELS = { orderId: 'número do pedido', date: 'data', name: 'cliente', phone: 'telefone', total: 'total', discount: 'desconto', neighborhood: 'bairro', items: 'itens' };
+const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const MONTH_NAMES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const OBJECTIVES = ['Reativar clientes inativos', 'Aumentar pedidos no fim de semana', 'Aumentar pedidos no almoço', 'Divulgar lançamento de produto', 'Data comemorativa', 'Recompensar melhores clientes', 'Fidelização', 'Oportunidade do clima'];
 const EMOJIS = ['😋', '🔥', '🎉', '💛', '👉', '🍕', '🍝', '🍔', '🍣', '🥗', '🍲', '🍰', '🎁', '⏰', '🛵', '✨'];
 
@@ -92,6 +99,85 @@ function parseContactsText(text) {
     .filter((r) => r.phone);
 }
 
+/** Uma linha de CSV respeitando aspas ("Pizza, grande";"45,90"). */
+function splitCsvLine(line, sep) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i += 1; } else if (ch === '"') quoted = false; else cur += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === sep) { out.push(cur.trim()); cur = ''; } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/**
+ * Planilha de pedidos (caixa, iFood…) → linhas com as colunas que o servidor entende. Só separa as colunas
+ * pelo cabeçalho: a validação de cada linha é do servidor. `line` é o número da linha no arquivo.
+ */
+// Para cada coluna, os padrões do mais exato para o mais solto (cabeçalho já sem acentos e em minúsculas);
+// exclude evita confundir "data do pedido" com o número do pedido e "telefone do cliente" com o nome
+const ORDER_COLUMNS = [
+  ['date', [/^data$|^date$/, /data|date|dia|hora/]],
+  ['phone', [/tel|fone|phone|cel|whats/]],
+  ['orderId', [/^(n(umero|o|º)?|id|codigo|cod)\.?( do)? pedido/, /^pedido$/, /^(n(umero|o|º)?|id|codigo|order)$/, /pedido|numero|codigo|^id\b/], /data|date|valor|total|item|cliente/],
+  ['name', [/^(nome|cliente|name)$/, /nome|cliente|name/]],
+  ['discount', [/desconto|discount/]],
+  ['total', [/^total$|^valor$/, /valor total|total do pedido|total pago|valor pago/, /total|valor|value/], /sub ?total|taxa|frete|entrega/],
+  ['neighborhood', [/bairro|neighbo/]],
+  ['items', [/ite(m|ns)|produto/]],
+];
+function parseOrdersText(text) {
+  const lines = String(text || '').split(/\r?\n/).map((l, i) => ({ text: l, line: i + 1 })).filter((l) => l.text.trim());
+  if (!lines.length) return { rows: [], columns: [] };
+  const head = lines[0].text;
+  const sep = [';', '\t', ','].map((s) => [s, head.split(s).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const header = splitCsvLine(head, sep).map((h) => h.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+  const index = {};
+  for (const [key, patterns, exclude] of ORDER_COLUMNS) {
+    const taken = new Set(Object.values(index));
+    for (const re of patterns) {
+      const i = header.findIndex((h, j) => !taken.has(j) && re.test(h) && !(exclude && exclude.test(h)));
+      if (i >= 0) { index[key] = i; break; }
+    }
+  }
+  const hasHeader = index.orderId !== undefined && index.total !== undefined;
+  const body = hasHeader ? lines.slice(1) : lines;
+  // Sem cabeçalho reconhecido: pedido; data; cliente; telefone; total; itens
+  const map = hasHeader ? index : { orderId: 0, date: 1, name: 2, phone: 3, total: 4, items: 5 };
+  const rows = body.map(({ text: t, line }) => {
+    const cells = splitCsvLine(t, sep);
+    const row = { line };
+    for (const [key, i] of Object.entries(map)) row[key] = cells[i] ?? '';
+    return row;
+  });
+  // Na ordem da planilha de exemplo, para a pessoa conferir o que foi reconhecido
+  return { rows, columns: Object.keys(ORDER_COLUMN_LABELS).filter((k) => map[k] !== undefined) };
+}
+
+/** Avisinho sonoro de pedido novo (o navegador só toca depois de um clique na página, como o login). */
+function ding() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 1320].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + i * 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + i * 0.18 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.18 + 0.3);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.18);
+      osc.stop(ctx.currentTime + i * 0.18 + 0.32);
+    });
+    setTimeout(() => ctx.close(), 1000);
+  } catch { /* sem áudio */ }
+}
+
 function trendChart(series, hover) {
   const W = 680; const H = 230; const P = { l: 36, r: 12, t: 14, b: 28 };
   const max = Math.max(4, ...series.map((d) => Math.max(d.sent, d.read, d.clicks)));
@@ -128,7 +214,7 @@ function trendChart(series, hover) {
 // ── Componente principal ───────────────────────────────────
 document.addEventListener('alpine:init', () => {
   Alpine.data('coral', () => ({
-    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, ROLE, OBJECTIVES, EMOJIS, waFormat,
+    fmt, STATUS, APPROVAL, MSG_STATUS, CONN, ROLE, OBJECTIVES, EMOJIS, waFormat, ORDER_STATUS, ORDER_CLASS, ORDER_SOURCE, ORDER_COLUMN_LABELS, MONTH_NAMES, WEEKDAYS,
     icon: (name, size) => window.icon(name, size),
 
     booted: false,
@@ -153,11 +239,21 @@ document.addEventListener('alpine:init', () => {
     contacts: [],
     contactTags: [],
     contactFilter: { search: '', tag: '', status: '' },
+    contactFilters: {},
+    contactProfile: null,
+    filterModal: null,
     contactModal: null,
     importModal: null,
 
     restaurantModal: null,
     restaurantTab: 'diagnostico',
+
+    board: [],
+    orders: [],
+    orderFilter: { search: '', status: '', source: '', from: '', to: '' },
+    orderModal: null,
+    orderImport: null,
+    newOrders: 0,
 
     campaigns: [],
     campaignFilter: 'all',
@@ -249,6 +345,7 @@ document.addEventListener('alpine:init', () => {
         if (this.scope && !restaurants.find((r) => r.id === this.scope)) this.scope = '';
       }
       this.openEvents();
+      this.countNewOrders().catch(() => {});
       if (!location.hash) location.hash = '#/painel';
       await this.onRoute();
     },
@@ -275,10 +372,23 @@ document.addEventListener('alpine:init', () => {
         this.toast(`${d.name || 'Um cliente'} abriu o link da campanha.`, 'Clique');
         this.softRefresh();
       });
-      es.addEventListener('conversion', (e) => {
-        const c = JSON.parse(e.data);
-        this.toast(`${c.customerName || 'Cliente'}, ${fmt.money(c.value)} em ${c.restaurant}.`, 'Pedido no site');
+      es.addEventListener('order', (e) => {
+        const o = JSON.parse(e.data);
+        const where = this.isRestaurant ? '' : ` em ${o.restaurant}`;
+        if (o.status === 'new') {
+          this.newOrders += 1;
+          this.toast(`#${o.number} · ${o.customerName || 'Cliente'}, ${fmt.money(o.value)}${where}.`, 'Novo pedido');
+          if (this.route.name === 'pedidos') ding();
+        } else {
+          this.toast(`${o.customerName || 'Cliente'}, ${fmt.money(o.value)}${where}.`, 'Pedido no site');
+        }
         this.softRefresh();
+      });
+      es.addEventListener('order:update', (e) => {
+        const o = JSON.parse(e.data);
+        if (this.orderModal?.id === o.id) this.orderModal = { ...this.orderModal, ...o };
+        if (this.route.name === 'pedidos') this.softRefresh();
+        else this.countNewOrders().catch(() => {});
       });
       es.addEventListener('approval', (e) => {
         const d = JSON.parse(e.data);
@@ -336,13 +446,14 @@ document.addEventListener('alpine:init', () => {
     async onRoute() {
       const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
       let [name = 'painel', id, action] = parts;
-      const RESTAURANT_PAGES = ['painel', 'campanhas', 'relatorios', ...(this.isManager ? ['acessos'] : [])];
+      const RESTAURANT_PAGES = ['painel', 'pedidos', 'campanhas', 'relatorios', ...(this.isManager ? ['acessos'] : [])];
       if (this.isRestaurant && (!RESTAURANT_PAGES.includes(name) || id === 'nova' || action === 'editar')) {
         name = 'painel'; id = undefined; action = undefined;
         history.replaceState(null, '', '#/painel');
       }
       this.route = { name, params: { id, action } };
       this.detail = null;
+      this.contactProfile = null;
       this.editor = null;
       window.scrollTo({ top: 0 });
       await this.loadRoute();
@@ -355,7 +466,8 @@ document.addEventListener('alpine:init', () => {
       try {
         if (name === 'painel') { await this.loadDashboard(); if (this.isRestaurant) await this.loadCampaigns(); }
         if (name === 'restaurantes') this.restaurants = await api('/restaurants');
-        if (name === 'contatos') await this.loadContacts();
+        if (name === 'contatos') { if (params.id) await this.loadContactProfile(params.id); else await this.loadContacts(); }
+        if (name === 'pedidos') await this.loadOrders();
         if (name === 'acessos') await this.loadAccess();
         if (name === 'campanhas') {
           if (!params.id) await this.loadCampaigns();
@@ -480,6 +592,7 @@ document.addEventListener('alpine:init', () => {
     // ── Contatos ───────────────────────────────────────────
     async loadContacts() {
       const q = new URLSearchParams({ ...(this.scope ? { restaurantId: this.scope } : {}), ...Object.fromEntries(Object.entries(this.contactFilter).filter(([, v]) => v)) });
+      if (Object.keys(this.contactFilters).length) q.set('filters', JSON.stringify(this.contactFilters));
       const [list, tags] = await Promise.all([api(`/contacts?${q}`), api(`/contacts/tags${this.scope ? `?restaurantId=${this.scope}` : ''}`)]);
       this.contacts = list;
       this.contactTags = tags;
@@ -493,8 +606,18 @@ document.addEventListener('alpine:init', () => {
 
     editContact(c) {
       this.contactModal = c
-        ? { ...c, tagsText: (c.tags || []).join(', ') }
-        : { restaurantId: this.scope || this.restaurants[0]?.id || '', name: '', phone: '', tagsText: '', optIn: true, optInSource: 'Cadastro manual', notes: '' };
+        ? { ...c, tagsText: (c.tags || []).join(', '), birthDay: c.birthDay ?? '', birthMonth: c.birthMonth ?? '', birthYear: c.birthYear ?? '', neighborhood: c.neighborhood || '' }
+        : { restaurantId: this.scope || this.restaurants[0]?.id || '', name: '', phone: '', tagsText: '', optIn: true, optInSource: 'Cadastro manual', notes: '', birthDay: '', birthMonth: '', birthYear: '', neighborhood: '' };
+    },
+
+    birthdayText(c) {
+      if (!c.birthDay) return '';
+      return `${c.birthDay} de ${MONTH_NAMES[c.birthMonth - 1]}${c.birthYear ? ` de ${c.birthYear}` : ''}`;
+    },
+
+    /** Depois de editar um contato: na ficha, recarrega a ficha; na lista, a lista. */
+    refreshContacts() {
+      return this.route.params.id ? this.loadContactProfile(this.route.params.id) : this.loadContacts();
     },
 
     async saveContact() {
@@ -504,7 +627,7 @@ document.addEventListener('alpine:init', () => {
         if (c.id) await api(`/contacts/${c.id}`, { method: 'PUT', body });
         else await api('/contacts', { method: 'POST', body });
         this.contactModal = null;
-        await this.loadContacts();
+        await this.refreshContacts();
         this.toast('Contato salvo.');
       } catch (err) { this.error(err); }
     },
@@ -512,14 +635,14 @@ document.addEventListener('alpine:init', () => {
     async toggleOptOut(c) {
       try {
         await api(`/contacts/${c.id}`, { method: 'PUT', body: { optedOut: !c.optedOut } });
-        await this.loadContacts();
+        await this.refreshContacts();
       } catch (err) { this.error(err); }
     },
 
     deleteContact(c) {
       this.confirm(`Remover ${c.name || fmt.phone(c.phone)}?`, 'O contato sai da base deste restaurante.', async () => {
         await api(`/contacts/${c.id}`, { method: 'DELETE' });
-        await this.loadContacts();
+        if (this.route.params.id) this.go('#/contatos'); else await this.loadContacts();
       });
     },
 
@@ -546,6 +669,219 @@ document.addEventListener('alpine:init', () => {
         m.result = await api('/contacts/import', { method: 'POST', body: { restaurantId: m.restaurantId, contacts: this.importRows, tags: m.tags, optIn: true, optInSource: m.source } });
         await this.loadContacts();
         this.restaurants = await api('/restaurants');
+      } catch (err) { this.error(err); } finally { m.loading = false; }
+    },
+
+    // ── Filtros de compra (público da campanha e lista de contatos) ─
+    /** Resumo legível dos filtros, um texto por filtro ativo. */
+    describeFilters(f = {}) {
+      const out = [];
+      const span = (r, one, many, money = false) => {
+        const v = (n) => (money ? fmt.money(n) : fmt.int(n));
+        if (r.min !== undefined && r.max !== undefined) return r.min === r.max ? `${v(r.min)} ${r.min === 1 ? one : many}` : `de ${v(r.min)} a ${v(r.max)} ${many}`;
+        if (r.min !== undefined) return `${v(r.min)}+ ${r.min === 1 ? one : many}`;
+        return `até ${v(r.max)} ${r.max === 1 ? one : many}`;
+      };
+      const day = (s) => s.split('-').reverse().join('/');
+      const period = (p) => (p.from && p.to ? `de ${day(p.from)} a ${day(p.to)}` : p.from ? `desde ${day(p.from)}` : `até ${day(p.to)}`);
+      if (f.orders) out.push(f.orders.max === 0 && f.orders.min === undefined ? 'nunca compraram' : span(f.orders, 'pedido', 'pedidos'));
+      if (f.spent) out.push(`gastaram ${span(f.spent, '', '', true).trim()}`);
+      if (f.lastOrderDays) {
+        const { min, max } = f.lastOrderDays;
+        out.push(min !== undefined && max !== undefined ? `última compra entre ${min} e ${max} dias atrás` : min !== undefined ? `sem comprar há ${min}+ dias` : `compraram nos últimos ${max} dias`);
+      }
+      if (f.firstOrder) out.push(`primeira compra ${period(f.firstOrder)}`);
+      if (f.lastOrder) out.push(`última compra ${period(f.lastOrder)}`);
+      if (f.birthday?.month) out.push(`aniversário em ${MONTH_NAMES[f.birthday.month - 1]}`);
+      if (f.birthday?.nextDays) out.push(`aniversário nos próximos ${f.birthday.nextDays} dias`);
+      if (f.neighborhoods?.length) out.push(`bairro: ${f.neighborhoods.join(', ')}`);
+      if (f.items?.length) out.push(`${f.itemsMode === 'any' ? 'já pediram' : 'mais pedem'}: ${f.items.join(', ')}`);
+      if (f.weekdays?.length) out.push(`preferem ${f.weekdays.map((d) => WEEKDAYS[d]).join(', ')}`);
+      return out;
+    },
+    segmentText(segment) {
+      const parts = [...(segment?.tags?.length ? [`tags: ${segment.tags.join(', ')}`] : []), ...this.describeFilters(segment?.filters)];
+      return parts.length ? parts.join(' · ') : 'base completa';
+    },
+    /** Filtros gravados → campos da janela (texto nos inputs, listas nas etiquetas). */
+    filtersToForm(f = {}) {
+      const s = (v) => (v === undefined || v === null ? '' : String(v));
+      return {
+        ordersMin: s(f.orders?.min), ordersMax: s(f.orders?.max), spentMin: s(f.spent?.min), spentMax: s(f.spent?.max),
+        lastMin: s(f.lastOrderDays?.min), lastMax: s(f.lastOrderDays?.max),
+        firstFrom: s(f.firstOrder?.from), firstTo: s(f.firstOrder?.to), lastFrom: s(f.lastOrder?.from), lastTo: s(f.lastOrder?.to),
+        bdayMode: f.birthday?.month ? 'month' : f.birthday?.nextDays ? 'next' : '',
+        bdayMonth: s(f.birthday?.month || new Date().getMonth() + 1), bdayNext: s(f.birthday?.nextDays || 7),
+        neighborhoods: [...(f.neighborhoods || [])], items: [...(f.items || [])], itemsMode: f.itemsMode || 'top', weekdays: [...(f.weekdays || [])],
+      };
+    },
+    /** Campos da janela → filtros (o servidor valida de novo e descarta o que estiver vazio). */
+    formToFilters(m) {
+      const range = (min, max) => ({ ...(min !== '' ? { min: Number(String(min).replace(',', '.')) } : {}), ...(max !== '' ? { max: Number(String(max).replace(',', '.')) } : {}) });
+      const period = (from, to) => ({ ...(from ? { from } : {}), ...(to ? { to } : {}) });
+      const out = {
+        orders: range(m.ordersMin, m.ordersMax), spent: range(m.spentMin, m.spentMax), lastOrderDays: range(m.lastMin, m.lastMax),
+        firstOrder: period(m.firstFrom, m.firstTo), lastOrder: period(m.lastFrom, m.lastTo),
+        birthday: m.bdayMode === 'month' ? { month: Number(m.bdayMonth) } : m.bdayMode === 'next' ? { nextDays: Number(m.bdayNext) } : {},
+        neighborhoods: m.neighborhoods, items: m.items, weekdays: m.weekdays,
+      };
+      if (m.items.length) out.itemsMode = m.itemsMode;
+      return Object.fromEntries(Object.entries(out).filter(([, v]) => (Array.isArray(v) ? v.length : typeof v === 'object' ? Object.keys(v).length : true)));
+    },
+    async openFilters(target) {
+      const current = target === 'editor' ? this.editor.form.segment.filters : this.contactFilters;
+      const restaurantId = target === 'editor' ? this.editor.form.restaurantId : this.scope;
+      this.filterModal = { target, restaurantId, form: this.filtersToForm(current), facets: { neighborhoods: [], items: [] }, count: null, error: '' };
+      this.refreshFilterCount();
+      try {
+        this.filterModal.facets = await api(`/contacts/facets${restaurantId ? `?restaurantId=${restaurantId}` : ''}`);
+      } catch (err) { this.error(err); }
+    },
+    toggleIn(list, value) {
+      const i = list.indexOf(value);
+      if (i >= 0) list.splice(i, 1); else list.push(value);
+      this.refreshFilterCount();
+    },
+    /** Quantos autorizados passam nos filtros (com as tags da campanha, quando é a campanha). */
+    refreshFilterCount() {
+      clearTimeout(this.filterTimer);
+      this.filterTimer = setTimeout(async () => {
+        const m = this.filterModal;
+        if (!m?.restaurantId) return;
+        const tags = m.target === 'editor' ? this.editor.form.segment : { tags: [], match: 'any' };
+        try {
+          const res = await api('/audience/preview', { method: 'POST', body: { restaurantId: m.restaurantId, segment: { tags: tags.tags, match: tags.match, filters: this.formToFilters(m.form) } } });
+          m.count = res.count;
+          m.error = '';
+        } catch (err) { m.error = err.message; m.count = null; }
+      }, 250);
+    },
+    applyFilters() {
+      const m = this.filterModal;
+      if (m.error) return;
+      const filters = this.formToFilters(m.form);
+      if (m.target === 'editor') {
+        this.editor.form.segment.filters = filters;
+        this.refreshAudience();
+      } else {
+        this.contactFilters = filters;
+        this.loadContacts().catch((err) => this.error(err));
+      }
+      this.filterModal = null;
+    },
+    clearFilters(target) {
+      if (target === 'editor') { this.editor.form.segment.filters = {}; this.refreshAudience(); } else { this.contactFilters = {}; this.loadContacts().catch((err) => this.error(err)); }
+    },
+
+    // ── Ficha do cliente ───────────────────────────────────
+    async loadContactProfile(id) {
+      this.contactProfile = await api(`/contacts/${id}`);
+    },
+    messageLabel(m) {
+      if (m.convertedAt) return { label: 'Pediu', cls: 'completed' };
+      if (m.clickedAt) return { label: 'Clicou', cls: 'sending' };
+      if (m.readAt) return { label: 'Leu', cls: 'delivered' };
+      return { label: MSG_STATUS[m.status] || m.status, cls: ['failed', 'skipped'].includes(m.status) ? 'failed' : 'queued' };
+    },
+
+    // ── Pedidos ────────────────────────────────────────────
+    ordersQuery(extra = {}) {
+      const q = { ...(this.scope && !this.isRestaurant ? { restaurantId: this.scope } : {}), ...extra };
+      return new URLSearchParams(Object.fromEntries(Object.entries(q).filter(([, v]) => v !== '' && v !== null && v !== undefined)));
+    },
+    async loadOrders() {
+      const [board, history] = await Promise.all([api(`/orders?${this.ordersQuery({ active: 1 })}`), api(`/orders?${this.ordersQuery(this.orderFilter)}`)]);
+      this.board = board;
+      this.orders = history;
+      this.newOrders = board.filter((o) => o.status === 'new').length;
+    },
+    async countNewOrders() {
+      this.newOrders = (await api(`/orders?${this.ordersQuery({ active: 1, status: 'new' })}`)).filter((o) => o.status === 'new').length;
+    },
+    get boardColumns() {
+      return [
+        { status: 'new', label: 'Novos', empty: 'Os pedidos do site chegam aqui na hora.' },
+        { status: 'preparing', label: 'Em preparo', empty: 'Nenhum pedido em preparo.' },
+        { status: 'dispatched', label: 'Saiu para entrega / pronto', empty: 'Nenhum pedido a caminho.' },
+      ].map((col) => ({ ...col, orders: this.board.filter((o) => o.status === col.status) }));
+    },
+    orderLabel(o) { return o.number ? `#${o.number}` : (o.orderId || 'Pedido'); },
+    orderStatusLabel(o) {
+      if (o.status === 'dispatched' && o.fulfillment === 'pickup') return 'Pronto para retirar';
+      return ORDER_STATUS[o.status] || o.status;
+    },
+    nextStatus(o) { return ORDER_NEXT[o.status] || null; },
+    nextLabel(o) {
+      return { new: 'Iniciar preparo', preparing: o.fulfillment === 'pickup' ? 'Pronto para retirar' : 'Saiu para entrega', dispatched: o.fulfillment === 'pickup' ? 'Retirado' : 'Entregue' }[o.status] || '';
+    },
+    fulfillmentText(o) {
+      if (o.fulfillment === 'pickup') return 'Retirada';
+      if (o.fulfillment === 'delivery') return o.neighborhood ? `Entrega · ${o.neighborhood}` : 'Entrega';
+      return o.neighborhood || '';
+    },
+    addressText(a) {
+      if (!a) return '';
+      const cep = a.cep ? `CEP ${a.cep.replace(/^(\d{5})(\d{3})$/, '$1-$2')}` : '';
+      return [[a.street, a.number].filter(Boolean).join(', '), a.complement, a.neighborhood, [a.city, a.state].filter(Boolean).join(' – '), cep].filter(Boolean).join(' · ');
+    },
+    waLink(phone) { return `https://wa.me/${String(phone || '').replace(/\D/g, '')}`; },
+    async openOrder(o) {
+      this.orderModal = o;
+      try { this.orderModal = await api(`/orders/${o.id}`); } catch (err) { this.error(err); }
+    },
+    async setOrderStatus(o, status) {
+      try {
+        const saved = await api(`/orders/${o.id}/status`, { method: 'PUT', body: { status } });
+        if (this.orderModal?.id === saved.id) this.orderModal = saved;
+        await this.loadOrders();
+        return saved;
+      } catch (err) {
+        this.error(err);
+        await this.loadOrders().catch(() => {});
+        return null;
+      }
+    },
+    advance(o) {
+      const next = this.nextStatus(o);
+      if (next) this.setOrderStatus(o, next);
+    },
+    cancelOrder(o) {
+      this.confirm(`Cancelar o pedido ${this.orderLabel(o)}?`, 'O cliente vê o cancelamento na página de acompanhamento. Não dá para desfazer.', async () => {
+        const saved = await api(`/orders/${o.id}/status`, { method: 'PUT', body: { status: 'canceled' } });
+        if (this.orderModal?.id === saved.id) this.orderModal = saved;
+        await this.loadOrders();
+      }, 'Cancelar pedido');
+    },
+    copyTracking(o) {
+      navigator.clipboard?.writeText(o.trackingUrl).then(() => this.toast('Link de acompanhamento copiado.'), () => {});
+    },
+
+    openOrderImport() {
+      this.orderImport = { restaurantId: this.scope || this.restaurants[0]?.id || '', channel: 'iFood', text: '', consent: false, preview: null, result: null, loading: false };
+    },
+    get orderImportParsed() {
+      return this.orderImport ? parseOrdersText(this.orderImport.text) : { rows: [], columns: [] };
+    },
+    readOrderImportFile(ev) {
+      const file = ev.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => { this.orderImport.text = String(reader.result || ''); this.orderImport.preview = null; };
+      reader.readAsText(file, 'utf-8');
+    },
+    async previewOrderImport() {
+      const m = this.orderImport;
+      m.loading = true;
+      try {
+        m.preview = await api('/orders/import/preview', { method: 'POST', body: { restaurantId: m.restaurantId, rows: this.orderImportParsed.rows } });
+      } catch (err) { this.error(err); } finally { m.loading = false; }
+    },
+    async runOrderImport() {
+      const m = this.orderImport;
+      m.loading = true;
+      try {
+        m.result = await api('/orders/import', { method: 'POST', body: { restaurantId: m.restaurantId, rows: this.orderImportParsed.rows, channel: m.channel, consent: m.consent } });
+        if (this.route.name === 'pedidos') await this.loadOrders();
       } catch (err) { this.error(err); } finally { m.loading = false; }
     },
 
@@ -595,7 +931,7 @@ document.addEventListener('alpine:init', () => {
       const r = this.restaurantById(restaurantId);
       this.editor = this.makeEditor({
         id: null, restaurantId, name: '', objective: '', occasion: '', coupon: r?.coupon || '', message: '', mediaUrl: '', destinationUrl: '',
-        segment: { tags: [], match: 'any' }, includeFooter: true, cloudTemplate: null, status: 'draft',
+        segment: { tags: [], match: 'any', filters: {} }, includeFooter: true, cloudTemplate: null, status: 'draft',
       });
       await Promise.all([this.refreshEditorTags(), this.loadUploads()]);
     },
@@ -611,7 +947,7 @@ document.addEventListener('alpine:init', () => {
       const cloud = c.cloudTemplate || { name: '', language: 'pt_BR', params: [] };
       return {
         step: 1,
-        form: { ...c, segment: { tags: [...(c.segment?.tags || [])], match: c.segment?.match || 'any' }, cloudTemplate: { ...cloud, paramsText: (cloud.params || []).join('\n') } },
+        form: { ...c, segment: { tags: [...(c.segment?.tags || [])], match: c.segment?.match || 'any', filters: JSON.parse(JSON.stringify(c.segment?.filters || {})) }, cloudTemplate: { ...cloud, paramsText: (cloud.params || []).join('\n') } },
         tags: [],
         audience: { count: c.audiencePreview ?? 0, sample: [] },
         seed: 0,
@@ -655,6 +991,7 @@ document.addEventListener('alpine:init', () => {
       if (!f.name) f.name = idea.title;
       const known = this.editor.tags.map((t) => t.tag);
       f.segment.tags = idea.tags.filter((t) => known.includes(t));
+      f.segment.filters = JSON.parse(JSON.stringify(idea.filters || {}));
       this.refreshAudience();
       this.toast(`Modelo “${idea.title}” aplicado. Revise o texto antes de enviar.`);
     },

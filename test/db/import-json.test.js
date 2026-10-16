@@ -38,11 +38,20 @@ describe('importação do antigo db.json', () => {
   it('referências quebradas: mensagem perde o contato, pedido perde campanha, mensagem e contato', async () => {
     assert.equal((await repos.messages.get(ID.m2)).contactId, null);
     assert.equal(await repos.messages.get(ID.m3), null);
-    const v2 = await repos.conversions.get(ID.v2);
+    const v2 = await repos.orders.get(ID.v2);
     assert.equal(v2.campaignId, null);
     assert.equal(v2.messageId, null);
     assert.equal(v2.contactId, null);
     assert.equal(v2.value, 30);
+  });
+
+  it('pedidos do JSON entram concluídos, com a origem pela campanha', async () => {
+    const v1 = await repos.orders.get(ID.v1);
+    assert.equal(v1.status, 'completed');
+    assert.equal(v1.source, 'campaign');
+    const v2 = await repos.orders.get(ID.v2);
+    assert.equal(v2.status, 'completed');
+    assert.equal(v2.source, 'site', 'perdeu a campanha (referência quebrada): conta como venda direta');
   });
 
   it('mantém ids, datas, JSON, senha e configurações', async () => {
@@ -52,7 +61,7 @@ describe('importação do antigo db.json', () => {
     const u = await repos.users.get(ID.user);
     assert.ok(AuthService.checkPassword('senha-giulia-123', u.passwordHash));
     assert.equal(u.role, 'manager', "o papel antigo 'restaurant' vira gerente, como na migração 004");
-    assert.equal((await repos.conversions.get(ID.v1)).value, 77.4);
+    assert.equal((await repos.orders.get(ID.v1)).value, 77.4);
     assert.equal((await db.one('SELECT phone_key FROM contacts WHERE id = $1', [ID.ana])).phone_key, '3199000001');
     await repos.settings.load();
     assert.equal(repos.settings.get().footer, 'Rodapé antigo');

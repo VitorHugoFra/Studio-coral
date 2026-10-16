@@ -5,9 +5,11 @@ const { table: users } = require('./repositories/users');
 const { table: contacts } = require('./repositories/contacts');
 const { table: campaigns } = require('./repositories/campaigns');
 const { table: messages } = require('./repositories/messages');
-const { table: conversions } = require('./repositories/conversions');
+const { table: orders } = require('./repositories/orders');
 
-const TABLES = { restaurants, users, contacts, campaigns, messages, conversions };
+// As chaves são as coleções do antigo JSON; os pedidos (conversions) vão para a tabela orders
+const TABLES = { restaurants, users, contacts, campaigns, messages, conversions: orders };
+const REPO = { conversions: 'orders' };
 const LABELS = { restaurants: 'Restaurantes', users: 'Acessos', contacts: 'Contatos', campaigns: 'Campanhas', messages: 'Mensagens', conversions: 'Pedidos' };
 const SHORT = { restaurants: 'restaurantes', users: 'acessos', contacts: 'contatos', campaigns: 'campanhas', messages: 'mensagens', conversions: 'pedidos' };
 // Qualquer repetido (id, slug, e-mail, telefone ou número de pedido) é ignorado
@@ -44,7 +46,7 @@ async function importJson(db, data) {
 
     const insert = async (name, rows, stat) => {
       try {
-        const inserted = await repos[name].insertMany(rows, { onConflict: SKIP_EXISTING });
+        const inserted = await repos[REPO[name] || name].insertMany(rows, { onConflict: SKIP_EXISTING });
         stat.inserted = inserted.length;
         stat.existing = rows.length - inserted.length; // já estavam no banco ou se repetem no próprio JSON
       } catch (err) {
@@ -88,7 +90,8 @@ async function importJson(db, data) {
       if (fixed.messageId && !messageIds.has(fixed.messageId)) fixed.messageId = null;
       if (fixed.contactId && !contactIds.has(fixed.contactId)) fixed.contactId = null;
       if (['campaignId', 'messageId', 'contactId'].some((k) => fixed[k] !== row[k])) conversionsPart.stat.adjusted += 1;
-      return fixed;
+      // Na versão com JSON não havia origem nem status: o que veio de campanha é de campanha, e tudo já foi concluído
+      return { ...fixed, source: fixed.campaignId ? 'campaign' : 'site', status: 'completed' };
     });
     await insert('conversions', conversionRows, conversionsPart.stat);
 

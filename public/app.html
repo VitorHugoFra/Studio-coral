@@ -78,6 +78,7 @@
     <a href="#/painel" class="brand-lockup" aria-label="Studio Coral"><span class="studio">STUDIO</span><span class="logo"></span></a>
     <nav class="nav">
       <a href="#/painel" :class="{ active: route.name === 'painel' }" @click="navOpen=false"><span x-html="icon('home')"></span> Painel</a>
+      <a href="#/pedidos" :class="{ active: route.name === 'pedidos' }" @click="navOpen=false"><span x-html="icon('bag')"></span> Pedidos <span class="count" x-show="newOrders" x-text="newOrders" :aria-label="`${newOrders} pedidos novos`"></span></a>
       <a href="#/campanhas" :class="{ active: route.name === 'campanhas' }" @click="navOpen=false"><span x-html="icon('send')"></span> Campanhas <span class="count" x-show="isRestaurant && pendingApprovals.length" x-text="pendingApprovals.length"></span></a>
       <a href="#/relatorios" :class="{ active: route.name === 'relatorios' }" @click="navOpen=false"><span x-html="icon('calendar')"></span> Relatórios</a>
       <template x-if="isManager">
@@ -117,7 +118,9 @@
         <template x-if="route.name === 'campanhas' && !route.params.id"><div><h1>Campanhas</h1></div></template>
         <template x-if="route.name === 'campanhas' && editor"><div><a href="#/campanhas" class="back"><span x-html="icon('left',14)"></span> Campanhas</a><h1 x-text="editor.form.name || 'Nova campanha'"></h1></div></template>
         <template x-if="route.name === 'campanhas' && detail"><div><a href="#/campanhas" class="back"><span x-html="icon('left',14)"></span> Campanhas</a><h1 x-text="detail.name"></h1><div class="sub" x-text="detail.restaurant"></div></div></template>
-        <template x-if="route.name === 'contatos'"><div><h1>Contatos</h1><div class="sub">Clientes que autorizaram receber mensagens de cada restaurante</div></div></template>
+        <template x-if="route.name === 'pedidos'"><div><h1>Pedidos</h1><div class="sub" x-text="`Em tempo real · ${scopeName}`"></div></div></template>
+        <template x-if="route.name === 'contatos' && !route.params.id"><div><h1>Contatos</h1><div class="sub">Clientes que autorizaram receber mensagens de cada restaurante</div></div></template>
+        <template x-if="route.name === 'contatos' && contactProfile"><div><a href="#/contatos" class="back"><span x-html="icon('left',14)"></span> Contatos</a><h1 x-text="contactProfile.name || fmt.phone(contactProfile.phone)"></h1><div class="sub" x-text="contactProfile.restaurant"></div></div></template>
         <template x-if="route.name === 'restaurantes'"><div><h1>Restaurantes</h1></div></template>
         <template x-if="route.name === 'acessos' && !isRestaurant"><div><h1>Acessos</h1><div class="sub">Quem entra no painel de cada restaurante</div></div></template>
         <template x-if="route.name === 'acessos' && isRestaurant"><div><h1>Equipe</h1><div class="sub" x-text="`Quem do ${user.restaurant} entra no painel`"></div></div></template>
@@ -125,7 +128,7 @@
         <template x-if="route.name === 'configuracoes'"><div><h1>Configurações</h1></div></template>
         <template x-if="route.name === 'relatorios'"><div><h1>Relatórios mensais</h1><div class="sub">Resultado das campanhas do mês, pronto para enviar ao restaurante em PDF</div></div></template>
       </div>
-      <template x-if="!isRestaurant && ['painel','campanhas','contatos','acessos'].includes(route.name) && !route.params.id">
+      <template x-if="!isRestaurant && ['painel','pedidos','campanhas','contatos','acessos'].includes(route.name) && !route.params.id">
         <select class="select" aria-label="Restaurante" :value="scope" @change="setScope($event.target.value)">
           <option value="">Todos os restaurantes</option>
           <template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id === scope"></option></template>
@@ -136,6 +139,9 @@
       </template>
       <template x-if="canManageAccess && route.name === 'acessos'">
         <button class="btn btn-primary" @click="newAccess()"><span x-html="icon('plus')"></span> <span x-text="isRestaurant ? 'Convidar pessoa' : 'Novo acesso'"></span></button>
+      </template>
+      <template x-if="!isRestaurant && route.name === 'pedidos'">
+        <button class="btn" @click="openOrderImport()"><span x-html="icon('upload',16)"></span> Importar planilha</button>
       </template>
     </header>
 
@@ -228,6 +234,74 @@
       </section>
     </template>
 
+    <!-- ─────────── PEDIDOS ─────────── -->
+    <template x-if="route.name === 'pedidos'">
+      <section class="stack orders-page">
+        <div class="board">
+          <template x-for="col in boardColumns" :key="col.status">
+            <div class="board-col" :class="col.status">
+              <div class="board-head"><b x-text="col.label"></b><span class="board-count" x-text="col.orders.length"></span></div>
+              <div class="board-list">
+                <template x-for="o in col.orders" :key="o.id">
+                  <article class="order-card" tabindex="0" @click="openOrder(o)" @keydown.enter="openOrder(o)">
+                    <div class="row between"><b class="order-num" x-text="orderLabel(o)"></b><span class="tiny muted" :title="fmt.dateTime(o.createdAt)" x-text="fmt.rel(o.createdAt)"></span></div>
+                    <div class="order-name" x-text="o.customerName || 'Cliente'"></div>
+                    <div class="tiny muted" x-show="!scope && !isRestaurant" x-text="o.restaurant"></div>
+                    <ul class="order-items">
+                      <template x-for="(it, i) in o.items.slice(0, 4)" :key="i"><li><span x-text="`${it.qty}× ${it.name}`"></span><span class="tiny muted" x-show="it.note" x-text="` · ${it.note}`"></span></li></template>
+                      <li class="muted" x-show="o.items.length > 4" x-text="`+ ${o.items.length - 4} itens`"></li>
+                    </ul>
+                    <div class="row between" style="gap:8px"><span class="chip" x-text="fulfillmentText(o)"></span><b x-text="fmt.money(o.value)"></b></div>
+                    <div class="tiny" style="color:var(--brown)" x-show="o.notes" x-text="`Obs.: ${o.notes}`"></div>
+                    <button class="btn btn-sm btn-dark" @click.stop="advance(o)" x-text="nextLabel(o)"></button>
+                  </article>
+                </template>
+                <div class="board-empty" x-show="!col.orders.length" x-text="col.empty"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="card">
+          <div class="card-head" style="flex-wrap:wrap;gap:10px">
+            <h3>Histórico</h3>
+            <div class="row-wrap">
+              <input class="input" style="max-width:230px" type="search" placeholder="Nome, telefone ou número" aria-label="Buscar pedido" x-model="orderFilter.search" @input.debounce.300ms="loadOrders()">
+              <select class="select" style="width:auto" aria-label="Situação" x-model="orderFilter.status" @change="loadOrders()">
+                <option value="">Todas as situações</option>
+                <template x-for="(label, key) in ORDER_STATUS" :key="key"><option :value="key" x-text="label"></option></template>
+              </select>
+              <select class="select" style="width:auto" aria-label="Origem" x-model="orderFilter.source" @change="loadOrders()">
+                <option value="">Todas as origens</option>
+                <template x-for="(label, key) in ORDER_SOURCE" :key="key"><option :value="key" x-text="label"></option></template>
+              </select>
+              <input class="input" style="width:auto" type="date" aria-label="De" x-model="orderFilter.from" @change="loadOrders()">
+              <input class="input" style="width:auto" type="date" aria-label="Até" x-model="orderFilter.to" @change="loadOrders()">
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Pedido</th><th>Cliente</th><th class="hide-sm">Origem</th><th class="hide-sm">Receber</th><th>Situação</th><th style="text-align:right">Total</th></tr></thead>
+              <tbody>
+                <template x-for="o in orders" :key="o.id">
+                  <tr @click="openOrder(o)" style="cursor:pointer">
+                    <td><b x-text="orderLabel(o)"></b><div class="tiny muted" x-text="fmt.dateTime(o.createdAt)"></div></td>
+                    <td><span x-text="o.customerName || '—'"></span><div class="tiny muted" x-show="!scope && !isRestaurant" x-text="o.restaurant"></div></td>
+                    <td class="hide-sm small"><span x-text="ORDER_SOURCE[o.source] || o.source"></span><span class="muted" x-show="o.channel" x-text="` · ${o.channel}`"></span></td>
+                    <td class="hide-sm small" x-text="fulfillmentText(o) || '—'"></td>
+                    <td><span class="status" :class="ORDER_CLASS[o.status]" x-text="orderStatusLabel(o)"></span></td>
+                    <td class="num" style="text-align:right" x-text="fmt.money(o.value)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <template x-if="!orders.length"><div class="empty">Nenhum pedido neste filtro.</div></template>
+            <div class="small muted" style="padding:10px 16px" x-show="orders.length" x-text="`${fmt.int(orders.length)} ${orders.length === 1 ? 'pedido' : 'pedidos'}${orders.length >= 200 ? ' (os 200 mais recentes; use os filtros para ver outros)' : ''}`"></div>
+          </div>
+        </div>
+      </section>
+    </template>
+
     <!-- ─────────── RESTAURANTES ─────────── -->
     <template x-if="route.name === 'restaurantes'">
       <section class="rest-list">
@@ -300,8 +374,8 @@
           </div>
         </div>
         <div class="card card-pad small muted stack" style="gap:6px">
-          <div><b>Gerente</b>: aprova campanhas, vê os relatórios e cuida dos acessos da equipe do restaurante.</div>
-          <div><b>Equipe</b>: aprova campanhas e vê os relatórios.</div>
+          <div><b>Gerente</b>: acompanha os pedidos, aprova campanhas, vê os relatórios e cuida dos acessos da equipe do restaurante.</div>
+          <div><b>Equipe</b>: acompanha os pedidos, aprova campanhas e vê os relatórios.</div>
           <div>Quem recebe um acesso cria a própria senha por um link (vale por 3 dias e funciona uma vez só). O link de nova senha vale por 2 horas. Mande cada link só para a própria pessoa: quem tem o link entra na conta.</div>
           <div x-show="!isRestaurant">A agência entra com o login definido no arquivo <span class="mono">.env</span> (não aparece nesta lista).</div>
         </div>
@@ -309,7 +383,7 @@
     </template>
 
     <!-- ─────────── CONTATOS ─────────── -->
-    <template x-if="route.name === 'contatos'">
+    <template x-if="route.name === 'contatos' && !route.params.id">
       <section class="card">
         <div class="card-head" style="flex-wrap:wrap">
           <div class="row-wrap grow">
@@ -321,23 +395,39 @@
             <select class="select" style="width:auto" x-model="contactFilter.status" @change="loadContacts()">
               <option value="">Todos</option><option value="authorized">Autorizados</option><option value="optedOut">Descadastrados</option><option value="pending">Sem autorização</option>
             </select>
+            <button class="btn" :class="{ 'btn-dark': describeFilters(contactFilters).length }" @click="openFilters('contacts')"><span x-html="icon('search',15)"></span> <span x-text="describeFilters(contactFilters).length ? `Filtros de compra (${describeFilters(contactFilters).length})` : 'Filtrar por compras'"></span></button>
           </div>
           <div class="row-wrap">
             <button class="btn" @click="openImport()"><span x-html="icon('upload',16)"></span> Importar planilha</button>
             <button class="btn btn-dark" @click="editContact(null)">Adicionar</button>
           </div>
         </div>
+        <template x-if="describeFilters(contactFilters).length">
+          <div class="filter-chips">
+            <template x-for="t in describeFilters(contactFilters)" :key="t"><span class="chip" x-text="t"></span></template>
+            <button class="btn btn-ghost btn-sm" @click="clearFilters('contacts')">Limpar filtros</button>
+          </div>
+        </template>
         <div class="table-wrap">
           <table class="table">
-            <thead><tr><th>Nome</th><th>WhatsApp</th><th class="hide-sm">Tags</th><th class="hide-sm">Autorização</th><th>Situação</th><th></th></tr></thead>
+            <thead><tr><th>Nome</th><th>WhatsApp</th><th class="hide-sm">Compras</th><th class="hide-sm">Tags</th><th>Situação</th><th></th></tr></thead>
             <tbody>
               <template x-for="c in contacts.slice(0, 300)" :key="c.id">
                 <tr>
-                  <td><span x-text="c.name || '—'"></span><div class="tiny muted" x-show="!scope" x-text="restaurantById(c.restaurantId)?.name"></div></td>
-                  <td class="num" x-text="fmt.phone(c.phone)"></td>
+                  <td>
+                    <a :href="`#/contatos/${c.id}`" class="contact-link" x-text="c.name || '—'"></a>
+                    <div class="tiny muted" x-show="!scope" x-text="restaurantById(c.restaurantId)?.name"></div>
+                    <div class="tiny muted" x-show="c.neighborhood || c.purchase?.lastNeighborhood || c.birthDay" x-text="[c.neighborhood || c.purchase?.lastNeighborhood, c.birthDay ? `aniversário ${c.birthDay}/${String(c.birthMonth).padStart(2, '0')}` : ''].filter(Boolean).join(' · ')"></div>
+                  </td>
+                  <td class="num" style="white-space:nowrap" x-text="fmt.phone(c.phone)"></td>
+                  <td class="hide-sm small" style="white-space:nowrap">
+                    <template x-if="c.purchase?.orders">
+                      <div><span><b x-text="fmt.int(c.purchase.orders)"></b> <span x-text="c.purchase.orders === 1 ? 'pedido' : 'pedidos'"></span> · <span x-text="fmt.money(c.purchase.total)"></span></span><div class="tiny muted" :title="fmt.dateTime(c.purchase.lastAt)" x-text="`última ${fmt.rel(c.purchase.lastAt)}`"></div></div>
+                    </template>
+                    <span class="muted" x-show="!c.purchase?.orders">—</span>
+                  </td>
                   <td class="hide-sm"><div class="row-wrap" style="gap:4px"><template x-for="t in c.tags" :key="t"><span class="chip" x-text="t"></span></template></div></td>
-                  <td class="hide-sm small muted" x-text="c.optInSource || '—'"></td>
-                  <td><span class="status" :class="contactStatus(c).cls" x-text="contactStatus(c).label"></span></td>
+                  <td><span class="status" :class="contactStatus(c).cls" x-text="contactStatus(c).label"></span><div class="tiny muted hide-sm" x-show="c.optInSource" x-text="c.optInSource"></div></td>
                   <td style="text-align:right;white-space:nowrap">
                     <button class="btn btn-ghost btn-sm" @click="editContact(c)">Editar</button>
                     <button class="btn btn-ghost btn-sm" @click="toggleOptOut(c)" x-text="c.optedOut ? 'Reativar' : 'Descadastrar'"></button>
@@ -349,6 +439,80 @@
           </table>
           <template x-if="!contacts.length"><div class="empty">Nenhum contato encontrado.</div></template>
           <div class="small muted" style="padding:10px 16px" x-show="contacts.length" x-text="`${fmt.int(contacts.length)} contatos${contacts.length > 300 ? ' (mostrando 300)' : ''}`"></div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── FICHA DO CLIENTE ─────────── -->
+    <template x-if="route.name === 'contatos' && contactProfile">
+      <section class="stack profile-page">
+        <div class="card card-pad profile-head">
+          <div class="grow stack" style="gap:6px">
+            <div class="row-wrap" style="gap:8px">
+              <span class="status" :class="contactStatus(contactProfile).cls" x-text="contactStatus(contactProfile).label"></span>
+              <template x-for="t in contactProfile.tags" :key="t"><span class="chip" x-text="t"></span></template>
+            </div>
+            <div class="row-wrap small" style="gap:14px">
+              <a :href="waLink(contactProfile.phone)" target="_blank" rel="noopener" x-text="fmt.phone(contactProfile.phone)"></a>
+              <span x-show="contactProfile.birthDay" x-text="`Aniversário: ${birthdayText(contactProfile)}`"></span>
+              <span x-show="contactProfile.profile.neighborhood" x-text="`Bairro: ${contactProfile.profile.neighborhood}${contactProfile.neighborhood ? '' : ' (do último pedido)'}`"></span>
+              <span class="muted" x-show="contactProfile.optInSource" x-text="`Autorização: ${contactProfile.optInSource}`"></span>
+              <span class="muted" x-text="`Na base desde ${fmt.date(contactProfile.createdAt)}`"></span>
+            </div>
+          </div>
+          <div class="row-wrap">
+            <button class="btn" @click="editContact(contactProfile)">Editar</button>
+            <button class="btn btn-ghost" @click="toggleOptOut(contactProfile)" x-text="contactProfile.optedOut ? 'Reativar' : 'Descadastrar'"></button>
+            <button class="btn btn-ghost btn-icon" title="Remover" aria-label="Remover" @click="deleteContact(contactProfile)" x-html="icon('trash',15)"></button>
+          </div>
+        </div>
+
+        <div class="card stats profile-stats">
+          <div><div class="label-up">Pedidos</div><div class="value" x-text="fmt.int(contactProfile.profile.orders)"></div><div class="foot" x-text="contactProfile.profile.orders ? `ticket médio ${fmt.money(contactProfile.profile.ticket)}` : 'ainda não comprou'"></div></div>
+          <div><div class="label-up">Total gasto</div><div class="value" x-text="fmt.money(contactProfile.profile.total)"></div><div class="foot">pedidos não cancelados</div></div>
+          <div><div class="label-up">Última compra</div><div class="value" x-text="contactProfile.profile.lastAt ? fmt.date(contactProfile.profile.lastAt) : '—'"></div><div class="foot" x-text="contactProfile.profile.daysSinceLast === null ? '' : contactProfile.profile.daysSinceLast === 0 ? 'hoje' : `há ${contactProfile.profile.daysSinceLast} ${contactProfile.profile.daysSinceLast === 1 ? 'dia' : 'dias'}`"></div></div>
+          <div><div class="label-up">Primeira compra</div><div class="value" x-text="contactProfile.profile.firstAt ? fmt.date(contactProfile.profile.firstAt) : '—'"></div><div class="foot" x-text="contactProfile.profile.firstAt ? new Date(contactProfile.profile.firstAt).getFullYear() : ''"></div></div>
+          <div><div class="label-up">Prefere pedir</div><div class="value" style="font-size:22px" x-text="contactProfile.profile.weekday === null ? '—' : WEEKDAYS[contactProfile.profile.weekday]"></div><div class="foot" x-text="contactProfile.profile.topItem ? `mais pede: ${contactProfile.profile.topItem}` : ''"></div></div>
+        </div>
+
+        <div class="dash-grid">
+          <div class="card">
+            <div class="card-head"><h3>Pedidos</h3><span class="small muted" x-text="contactProfile.orders.length >= 100 ? 'os 100 mais recentes' : ''"></span></div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>Pedido</th><th class="hide-sm">Origem</th><th>Situação</th><th style="text-align:right">Total</th></tr></thead>
+                <tbody>
+                  <template x-for="o in contactProfile.orders" :key="o.id">
+                    <tr @click="openOrder(o)" style="cursor:pointer">
+                      <td><b x-text="orderLabel(o)"></b><div class="tiny muted" x-text="fmt.dateTime(o.createdAt)"></div></td>
+                      <td class="hide-sm small"><span x-text="ORDER_SOURCE[o.source] || o.source"></span><span class="muted" x-show="o.channel" x-text="` · ${o.channel}`"></span></td>
+                      <td><span class="status" :class="ORDER_CLASS[o.status]" x-text="orderStatusLabel(o)"></span></td>
+                      <td class="num" style="text-align:right" x-text="fmt.money(o.value)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <template x-if="!contactProfile.orders.length"><div class="empty">Nenhum pedido deste cliente ainda.</div></template>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="card">
+              <div class="card-head"><h3>O que mais pede</h3></div>
+              <ul class="orders">
+                <template x-for="it in contactProfile.topItems" :key="it.name"><li><span x-text="it.name"></span><span class="val" x-text="`${fmt.int(it.qty)}×`"></span></li></template>
+              </ul>
+              <template x-if="!contactProfile.topItems.length"><div class="empty">Sem itens nos pedidos.</div></template>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Campanhas recebidas</h3></div>
+              <ul class="orders">
+                <template x-for="m in contactProfile.messages" :key="m.campaignId + (m.sentAt || '')">
+                  <li><div><a :href="`#/campanhas/${m.campaignId}`" x-text="m.campaign"></a><div class="tiny muted" x-text="m.sentAt ? fmt.dateTime(m.sentAt) : 'não enviada'"></div></div><span class="status val" :class="messageLabel(m).cls" x-text="messageLabel(m).label"></span></li>
+                </template>
+              </ul>
+              <template x-if="!contactProfile.messages.length"><div class="empty">Este cliente ainda não recebeu campanhas.</div></template>
+            </div>
+          </div>
         </div>
       </section>
     </template>
@@ -516,6 +680,15 @@
                   </div>
                   <span class="hint">Sem tag marcada, a campanha vai para toda a base autorizada.</span>
                 </div>
+                <div class="field">
+                  <label>Filtrar por compras</label>
+                  <div class="row-wrap">
+                    <template x-for="t in describeFilters(editor.form.segment.filters)" :key="t"><span class="chip" x-text="t"></span></template>
+                    <button type="button" class="btn btn-sm" @click="openFilters('editor')" x-text="describeFilters(editor.form.segment.filters).length ? 'Alterar filtros' : 'Escolher filtros'"></button>
+                    <button type="button" class="btn btn-ghost btn-sm" x-show="describeFilters(editor.form.segment.filters).length" @click="clearFilters('editor')">Limpar</button>
+                  </div>
+                  <span class="hint">Última compra, quantidade de pedidos, total gasto, aniversário, bairro, item mais pedido e dia da semana preferido.</span>
+                </div>
                 <div class="row" x-show="editor.form.segment.tags.length > 1">
                   <span class="small">Precisa ter</span>
                   <div class="seg">
@@ -540,7 +713,7 @@
                   <dl class="summary">
                     <dt>Restaurante</dt><dd x-text="editorRestaurant?.name"></dd>
                     <dt>Objetivo</dt><dd x-text="editor.form.objective || '—'"></dd>
-                    <dt>Público</dt><dd x-text="`${fmt.int(editor.audience.count)} contatos` + (editor.form.segment.tags.length ? ` (${editor.form.segment.tags.join(', ')})` : ' (base completa)')"></dd>
+                    <dt>Público</dt><dd x-text="`${fmt.int(editor.audience.count)} contatos (${segmentText(editor.form.segment)})`"></dd>
                     <dt>Imagem</dt><dd x-text="editor.form.mediaUrl ? 'Sim' : 'Não'"></dd>
                     <dt>Canal</dt><dd><span class="status" :class="conn.state" x-text="`${conn.label} · ${CONN[conn.state]}`"></span></dd>
                     <dt>Tempo estimado</dt><dd x-text="estimate"></dd>
@@ -637,7 +810,7 @@
             </div>
             <dl class="summary">
               <dt>Objetivo</dt><dd x-text="detail.objective || '—'"></dd>
-              <dt>Quem recebe</dt><dd x-text="`${fmt.int(detail.audiencePreview || 0)} clientes da sua base` + (detail.segment?.tags?.length ? ` (${detail.segment.tags.join(', ')})` : '')"></dd>
+              <dt>Quem recebe</dt><dd x-text="`${fmt.int(detail.audiencePreview || 0)} clientes da sua base` + (detail.segment?.tags?.length || describeFilters(detail.segment?.filters).length ? ` (${segmentText(detail.segment)})` : '')"></dd>
               <dt>Cupom</dt><dd x-text="detail.coupon || '—'"></dd>
               <dt>Envio</dt><dd x-text="detail.scheduledAt ? fmt.dateTime(detail.scheduledAt) : 'Logo após a aprovação'"></dd>
               <dt>Link</dt><dd class="small" style="word-break:break-all" x-text="detail.destinationUrl || restaurants[0]?.siteUrl || restaurants[0]?.demoUrl"></dd>
@@ -1039,6 +1212,21 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
           <div class="field"><label>Nome</label><input class="input" x-model="contactModal.name"></div>
           <div class="field"><label>WhatsApp</label><input class="input" required x-model="contactModal.phone" placeholder="(31) 99999-9999" inputmode="tel"></div>
         </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Aniversário</label>
+            <div class="bday-fields">
+              <select class="select" aria-label="Dia" x-model="contactModal.birthDay"><option value="">Dia</option><template x-for="d in 31" :key="d"><option :value="d" x-text="d" :selected="String(d) === String(contactModal.birthDay)"></option></template></select>
+              <select class="select" aria-label="Mês" x-model="contactModal.birthMonth"><option value="">Mês</option><template x-for="(m, i) in MONTH_NAMES" :key="m"><option :value="i + 1" x-text="m" :selected="String(i + 1) === String(contactModal.birthMonth)"></option></template></select>
+              <input class="input" aria-label="Ano (opcional)" inputmode="numeric" maxlength="4" placeholder="Ano" x-model="contactModal.birthYear">
+            </div>
+          </div>
+          <div class="field">
+            <label>Bairro</label>
+            <input class="input" x-model="contactModal.neighborhood" maxlength="80" :placeholder="contactModal.purchase?.lastNeighborhood ? `Do último pedido: ${contactModal.purchase.lastNeighborhood}` : ''">
+            <span class="hint">Vazio: vale o bairro do último pedido.</span>
+          </div>
+        </div>
         <div class="field"><label>Tags</label><input class="input" x-model="contactModal.tagsText" placeholder="vip, almoco"><span class="hint">Separadas por vírgula.</span></div>
         <div class="field"><label>Como autorizou</label><input class="input" x-model="contactModal.optInSource" placeholder="Ex.: cadastro no balcão"></div>
         <label class="check"><input type="checkbox" x-model="contactModal.optIn"> O cliente autorizou receber mensagens</label>
@@ -1092,6 +1280,220 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
   </div>
 </template>
 
+<template x-if="filterModal">
+  <div class="overlay" @keydown.escape.window="filterModal=null" @click.self="filterModal=null">
+    <form class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="fm-title" @submit.prevent="applyFilters" @input.debounce.300ms="refreshFilterCount()" @change="refreshFilterCount()">
+      <div class="modal-head">
+        <div><h2 id="fm-title">Filtrar por compras</h2><div class="small muted">Todos os filtros valem juntos. Pedidos cancelados não contam.</div></div>
+        <button type="button" class="btn btn-ghost btn-icon" @click="filterModal=null" x-html="icon('x')" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body filters-form">
+        <fieldset>
+          <legend>Pedidos e gasto</legend>
+          <div class="grid-2">
+            <div class="field"><label>Quantidade de pedidos</label><div class="range"><input class="input" inputmode="numeric" placeholder="mín." aria-label="Mínimo de pedidos" x-model="filterModal.form.ordersMin"><span>a</span><input class="input" inputmode="numeric" placeholder="máx." aria-label="Máximo de pedidos" x-model="filterModal.form.ordersMax"></div><span class="hint">Máximo 0: quem nunca comprou.</span></div>
+            <div class="field"><label>Total gasto (R$)</label><div class="range"><input class="input" inputmode="decimal" placeholder="mín." aria-label="Gasto mínimo" x-model="filterModal.form.spentMin"><span>a</span><input class="input" inputmode="decimal" placeholder="máx." aria-label="Gasto máximo" x-model="filterModal.form.spentMax"></div></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Quando comprou</legend>
+          <div class="field">
+            <label>Dias desde a última compra</label>
+            <div class="range"><input class="input" inputmode="numeric" placeholder="no mínimo" aria-label="No mínimo dias" x-model="filterModal.form.lastMin"><span>a</span><input class="input" inputmode="numeric" placeholder="no máximo" aria-label="No máximo dias" x-model="filterModal.form.lastMax"><span>dias</span></div>
+            <div class="row-wrap" style="gap:6px;margin-top:6px">
+              <button type="button" class="chip chip-toggle" @click="Object.assign(filterModal.form, { lastMin: '30', lastMax: '' }); refreshFilterCount()">Sumidos há 30+ dias</button>
+              <button type="button" class="chip chip-toggle" @click="Object.assign(filterModal.form, { lastMin: '60', lastMax: '' }); refreshFilterCount()">Sumidos há 60+ dias</button>
+              <button type="button" class="chip chip-toggle" @click="Object.assign(filterModal.form, { lastMin: '', lastMax: '7' }); refreshFilterCount()">Compraram nos últimos 7 dias</button>
+            </div>
+            <span class="hint">Quem nunca comprou não entra neste filtro.</span>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label>Primeira compra</label><div class="range"><input class="input" type="date" aria-label="Primeira compra a partir de" x-model="filterModal.form.firstFrom"><span>a</span><input class="input" type="date" aria-label="Primeira compra até" x-model="filterModal.form.firstTo"></div></div>
+            <div class="field"><label>Última compra</label><div class="range"><input class="input" type="date" aria-label="Última compra a partir de" x-model="filterModal.form.lastFrom"><span>a</span><input class="input" type="date" aria-label="Última compra até" x-model="filterModal.form.lastTo"></div></div>
+          </div>
+          <div class="field">
+            <label>Dia da semana preferido</label>
+            <div class="row-wrap" style="gap:6px">
+              <template x-for="(d, i) in WEEKDAYS" :key="d"><button type="button" class="chip chip-toggle" :class="{ on: filterModal.form.weekdays.includes(i) }" @click="toggleIn(filterModal.form.weekdays, i)" x-text="d"></button></template>
+            </div>
+            <span class="hint">O dia em que o cliente mais fez pedidos.</span>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Aniversário</legend>
+          <div class="row-wrap" style="gap:10px;align-items:center">
+            <select class="select" style="width:auto" aria-label="Tipo de filtro de aniversário" x-model="filterModal.form.bdayMode"><option value="">Qualquer data</option><option value="month">No mês de</option><option value="next">Nos próximos</option></select>
+            <template x-if="filterModal.form.bdayMode === 'month'"><select class="select" style="width:auto" aria-label="Mês do aniversário" x-model="filterModal.form.bdayMonth"><template x-for="(m, i) in MONTH_NAMES" :key="m"><option :value="i + 1" x-text="m" :selected="String(i + 1) === String(filterModal.form.bdayMonth)"></option></template></select></template>
+            <template x-if="filterModal.form.bdayMode === 'next'"><div class="range" style="max-width:180px"><input class="input" inputmode="numeric" aria-label="Próximos dias" x-model="filterModal.form.bdayNext"><span>dias</span></div></template>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Onde e o quê</legend>
+          <div class="field">
+            <label>Bairro</label>
+            <div class="row-wrap facet-list" style="gap:6px">
+              <template x-for="n in filterModal.facets.neighborhoods" :key="n.name"><button type="button" class="chip chip-toggle" :class="{ on: filterModal.form.neighborhoods.includes(n.name) }" @click="toggleIn(filterModal.form.neighborhoods, n.name)"><span x-text="n.name"></span> <span style="opacity:.6" x-text="n.count"></span></button></template>
+              <template x-if="!filterModal.facets.neighborhoods.length"><span class="small muted">Ainda não há bairros nos contatos ou nos pedidos.</span></template>
+            </div>
+          </div>
+          <div class="field">
+            <label>Itens</label>
+            <div class="seg" style="margin-bottom:6px" x-show="filterModal.form.items.length">
+              <button type="button" :class="{ on: filterModal.form.itemsMode === 'top' }" @click="filterModal.form.itemsMode = 'top'; refreshFilterCount()">é o que mais pede</button>
+              <button type="button" :class="{ on: filterModal.form.itemsMode === 'any' }" @click="filterModal.form.itemsMode = 'any'; refreshFilterCount()">já pediu</button>
+            </div>
+            <div class="row-wrap facet-list" style="gap:6px">
+              <template x-for="it in filterModal.facets.items" :key="it.name"><button type="button" class="chip chip-toggle" :class="{ on: filterModal.form.items.includes(it.name) }" @click="toggleIn(filterModal.form.items, it.name)"><span x-text="it.name"></span> <span style="opacity:.6" x-text="it.count"></span></button></template>
+              <template x-if="!filterModal.facets.items.length"><span class="small muted">Ainda não há pedidos com itens.</span></template>
+            </div>
+          </div>
+        </fieldset>
+      </div>
+      <div class="modal-foot" style="justify-content:space-between">
+        <div class="small" :class="filterModal.error ? 'red' : 'muted'" role="status">
+          <span x-show="filterModal.error" x-text="filterModal.error"></span>
+          <span x-show="!filterModal.error && filterModal.count !== null" x-html="`<b>${fmt.int(filterModal.count)}</b> ${filterModal.target === 'editor' ? 'contatos vão receber' : 'contatos autorizados passam nestes filtros'}`"></span>
+          <span x-show="!filterModal.error && !filterModal.restaurantId">Escolha um restaurante para ver a contagem.</span>
+        </div>
+        <div class="row-wrap" style="gap:8px">
+          <button type="button" class="btn btn-ghost" @click="filterModal.form = filtersToForm({}); refreshFilterCount()">Limpar tudo</button>
+          <button class="btn btn-dark" :disabled="!!filterModal.error">Aplicar filtros</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</template>
+
+<template x-if="orderModal">
+  <div class="overlay" @keydown.escape.window="orderModal=null" @click.self="orderModal=null">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="order-title">
+      <div class="modal-head">
+        <div><h2 id="order-title" x-text="`Pedido ${orderLabel(orderModal)}`"></h2><div class="small muted" x-text="[orderModal.restaurant, fmt.dateTime(orderModal.createdAt)].filter(Boolean).join(' · ')"></div></div>
+        <button class="btn btn-ghost btn-icon" @click="orderModal=null" x-html="icon('x')" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body order-detail">
+        <div class="row-wrap" style="gap:8px">
+          <span class="status" :class="ORDER_CLASS[orderModal.status]" x-text="orderStatusLabel(orderModal)"></span>
+          <span class="chip" x-text="ORDER_SOURCE[orderModal.source] + (orderModal.channel ? ` · ${orderModal.channel}` : '')"></span>
+          <span class="chip" x-show="orderModal.fulfillment" x-text="orderModal.fulfillment === 'pickup' ? 'Retirada no balcão' : 'Entrega'"></span>
+          <span class="chip" x-show="orderModal.orderId && !orderModal.number" x-text="`Nº externo ${orderModal.orderId}`"></span>
+        </div>
+
+        <div class="grid-2">
+          <dl class="facts">
+            <div><dt>Cliente</dt><dd x-text="orderModal.customerName || '—'"></dd></div>
+            <div x-show="orderModal.phone"><dt>WhatsApp</dt><dd><a :href="waLink(orderModal.phone)" target="_blank" rel="noopener" x-text="fmt.phone(orderModal.phone)"></a></dd></div>
+            <div x-show="orderModal.cpf"><dt>CPF</dt><dd class="num" x-text="String(orderModal.cpf || '').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')"></dd></div>
+            <div x-show="orderModal.address"><dt>Endereço</dt><dd x-text="addressText(orderModal.address)"></dd></div>
+            <div x-show="!orderModal.address && orderModal.neighborhood"><dt>Bairro</dt><dd x-text="orderModal.neighborhood"></dd></div>
+            <div x-show="orderModal.notes"><dt>Observações</dt><dd x-text="orderModal.notes"></dd></div>
+          </dl>
+          <div>
+            <table class="table order-lines">
+              <tbody>
+                <template x-for="(it, i) in orderModal.items" :key="i">
+                  <tr><td><span x-text="`${it.qty}× ${it.name}`"></span><div class="tiny muted" x-show="it.note" x-text="`Obs.: ${it.note}`"></div></td><td class="num" style="text-align:right" x-text="it.price === null || it.price === undefined ? '' : fmt.money(it.qty * it.price)"></td></tr>
+                </template>
+                <tr x-show="orderModal.discount"><td x-text="orderModal.coupon ? `Cupom ${orderModal.coupon}` : 'Desconto'"></td><td class="num" style="text-align:right" x-text="'− ' + fmt.money(orderModal.discount)"></td></tr>
+                <tr><td><b>Total</b></td><td class="num" style="text-align:right"><b x-text="fmt.money(orderModal.value)"></b></td></tr>
+              </tbody>
+            </table>
+            <template x-if="!orderModal.items?.length"><p class="small muted">Sem itens detalhados.</p></template>
+          </div>
+        </div>
+
+        <template x-if="orderModal.statusLog?.length">
+          <div>
+            <div class="label-up" style="margin-bottom:6px">Histórico</div>
+            <ol class="status-log">
+              <template x-for="(e, i) in orderModal.statusLog" :key="i">
+                <li><span class="status" :class="ORDER_CLASS[e.status]" x-text="e.status === 'dispatched' && orderModal.fulfillment === 'pickup' ? 'Pronto para retirar' : ORDER_STATUS[e.status]"></span><span class="small muted" x-text="[fmt.dateTime(e.at), e.by || (e.status === 'new' ? 'pelo site' : '')].filter(Boolean).join(' · ')"></span></li>
+              </template>
+            </ol>
+          </div>
+        </template>
+
+        <template x-if="orderModal.trackingUrl">
+          <div class="row-wrap" style="gap:8px">
+            <span class="small muted">Acompanhamento do cliente:</span>
+            <a class="small" :href="orderModal.trackingUrl" target="_blank" rel="noopener">abrir página <span x-html="icon('external',13)"></span></a>
+            <button class="btn btn-ghost btn-sm" @click="copyTracking(orderModal)"><span x-html="icon('copy',14)"></span> Copiar link</button>
+          </div>
+        </template>
+      </div>
+      <div class="modal-foot" style="justify-content:space-between">
+        <div>
+          <template x-if="!['completed','canceled'].includes(orderModal.status)"><button class="btn btn-ghost" style="color:var(--danger)" @click="cancelOrder(orderModal)">Cancelar pedido</button></template>
+        </div>
+        <div class="row-wrap" style="gap:8px">
+          <button class="btn btn-ghost" @click="orderModal=null">Fechar</button>
+          <template x-if="nextStatus(orderModal)"><button class="btn btn-dark" @click="advance(orderModal)" x-text="nextLabel(orderModal)"></button></template>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template x-if="orderImport">
+  <div class="overlay" @keydown.escape.window="orderImport=null" @click.self="orderImport=null">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="oi-title">
+      <div class="modal-head"><h2 id="oi-title">Importar pedidos</h2><button class="btn btn-ghost btn-icon" @click="orderImport=null" x-html="icon('x')" aria-label="Fechar"></button></div>
+
+      <template x-if="!orderImport.result">
+        <div class="modal-body">
+          <div class="grid-3">
+            <div class="field"><label>Restaurante</label><select class="select" x-model="orderImport.restaurantId" @change="orderImport.preview = null"><template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id===orderImport.restaurantId"></option></template></select></div>
+            <div class="field"><label>De onde vem</label><select class="select" x-model="orderImport.channel"><option>iFood</option><option>Caixa</option><option>Outro</option></select></div>
+            <div class="field"><label>Arquivo CSV</label><input class="input" type="file" accept=".csv,.txt" @change="readOrderImportFile"></div>
+          </div>
+          <div class="field">
+            <label>Ou cole a planilha</label>
+            <textarea class="textarea mono" x-model="orderImport.text" @input="orderImport.preview = null" placeholder="pedido;data;cliente;telefone;total;bairro;itens&#10;9001;05/03/2026 19:40;Marina Souza;31999990000;45,90;Savassi;2x Lasanha"></textarea>
+            <span class="hint">Colunas reconhecidas pelo cabeçalho: número do pedido, data, cliente, telefone, total, desconto, bairro e itens. Número, data e total são obrigatórios. Pedido com o mesmo número não entra duas vezes.</span>
+          </div>
+          <template x-if="orderImportParsed.rows.length && !orderImport.preview">
+            <p class="small muted" style="margin:0" x-text="`${orderImportParsed.rows.length} ${orderImportParsed.rows.length === 1 ? 'linha' : 'linhas'} · colunas reconhecidas: ${orderImportParsed.columns.map((c) => ORDER_COLUMN_LABELS[c]).join(', ')}`"></p>
+          </template>
+
+          <template x-if="orderImport.preview">
+            <div class="card card-pad stack" style="gap:10px">
+              <div class="import-nums">
+                <div><b x-text="fmt.int(orderImport.preview.toImport)"></b><span>pedidos entram</span></div>
+                <div><b x-text="fmt.money(orderImport.preview.revenue)"></b><span>em vendas</span></div>
+                <div><b x-text="fmt.int(orderImport.preview.duplicated)"></b><span>já existiam</span></div>
+                <div><b x-text="fmt.int(orderImport.preview.newContacts)"></b><span>contatos novos</span></div>
+                <div :class="{ bad: orderImport.preview.errorCount }"><b x-text="fmt.int(orderImport.preview.errorCount)"></b><span>com erro</span></div>
+              </div>
+              <template x-if="orderImport.preview.errors.length">
+                <ul class="small" style="margin:0;color:var(--danger);max-height:140px;overflow:auto">
+                  <template x-for="e in orderImport.preview.errors" :key="e.line"><li x-text="`Linha ${e.line}${e.orderId ? ` (pedido ${e.orderId})` : ''}: ${e.error}`"></li></template>
+                </ul>
+              </template>
+              <template x-if="orderImport.preview.sample.length">
+                <table class="table"><tbody><template x-for="s in orderImport.preview.sample" :key="s.orderId"><tr><td class="num" x-text="s.orderId"></td><td x-text="fmt.dateTime(s.createdAt)"></td><td x-text="s.customerName || '—'"></td><td class="num" style="text-align:right" x-text="fmt.money(s.value)"></td></tr></template></tbody></table>
+              </template>
+              <label class="check" x-show="orderImport.preview.newContacts"><input type="checkbox" x-model="orderImport.consent"><span class="small">Confirmo que esses clientes autorizaram receber mensagens do restaurante (LGPD). Sem a confirmação, os contatos novos entram sem autorização.</span></label>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <template x-if="orderImport.result">
+        <div class="modal-body">
+          <p style="margin:0"><b x-text="fmt.int(orderImport.result.imported)"></b> pedidos importados, <span x-text="fmt.int(orderImport.result.duplicated)"></span> já existiam e <span x-text="fmt.int(orderImport.result.errorCount)"></span> com erro.</p>
+          <p class="small muted" style="margin:0" x-show="orderImport.result.contactsCreated" x-text="`${fmt.int(orderImport.result.contactsCreated)} contatos novos ${orderImport.consent ? 'autorizados' : 'sem autorização'}.`"></p>
+        </div>
+      </template>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" @click="orderImport=null" x-text="orderImport.result ? 'Fechar' : 'Cancelar'"></button>
+        <template x-if="!orderImport.result && !orderImport.preview"><button class="btn btn-dark" :disabled="!orderImportParsed.rows.length || orderImport.loading" @click="previewOrderImport"><span class="spin" x-show="orderImport.loading"></span> Conferir planilha</button></template>
+        <template x-if="!orderImport.result && orderImport.preview"><button class="btn btn-dark" :disabled="!orderImport.preview.toImport || orderImport.loading" @click="runOrderImport"><span class="spin" x-show="orderImport.loading"></span> <span x-text="`Importar ${fmt.int(orderImport.preview.toImport)} pedidos`"></span></button></template>
+      </div>
+    </div>
+  </div>
+</template>
+
 <template x-if="passwordModal">
   <div class="overlay" @keydown.escape.window="passwordModal=null" @click.self="passwordModal=null">
     <form class="modal" style="width:min(420px,100%)" role="dialog" aria-modal="true" @submit.prevent="changeOwnPassword">
@@ -1127,8 +1529,8 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
         </div>
         <div class="field" role="radiogroup" aria-label="Papel">
           <span class="label">Papel</span>
-          <label class="check"><input type="radio" value="manager" x-model="accessModal.role" :disabled="accessModal.self"> <span><b>Gerente</b> · aprova campanhas, vê os relatórios e cuida dos acessos da equipe</span></label>
-          <label class="check"><input type="radio" value="staff" x-model="accessModal.role" :disabled="accessModal.self"> <span><b>Equipe</b> · aprova campanhas e vê os relatórios</span></label>
+          <label class="check"><input type="radio" value="manager" x-model="accessModal.role" :disabled="accessModal.self"> <span><b>Gerente</b> · pedidos, campanhas e relatórios, e cuida dos acessos da equipe</span></label>
+          <label class="check"><input type="radio" value="staff" x-model="accessModal.role" :disabled="accessModal.self"> <span><b>Equipe</b> · pedidos, campanhas e relatórios</span></label>
           <span class="hint" x-show="accessModal.self">Você não pode mudar o próprio papel.</span>
         </div>
         <template x-if="accessModal.mode === 'new' && !isRestaurant">
