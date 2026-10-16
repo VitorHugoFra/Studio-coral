@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Criar senha · Studio Coral</title>
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lobster&family=Solway:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/coral.css">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <script defer src="/vendor/alpine.js"></script>
+</head>
+<!-- Link de convite ou de nova senha: /senha#<token>. O token fica depois do #, então o navegador não o manda ao
+     servidor ao abrir a página (nem a outros sites no Referer); ele vai só no corpo dos POST abaixo. -->
+<body x-data="senha" x-cloak>
+<div class="login-wrap">
+  <div class="login-art">
+    <span class="brand-lockup"><span class="studio">STUDIO</span><span class="logo"></span></span>
+  </div>
+  <div class="login-form">
+    <template x-if="state === 'loading'">
+      <span class="spin" aria-label="Carregando"></span>
+    </template>
+
+    <template x-if="state === 'invalid'">
+      <form @submit.prevent>
+        <h1>Link sem validade</h1>
+        <p class="note red" style="margin:0" x-text="error"></p>
+        <a class="btn btn-dark btn-lg" href="/app">Ir para a entrada</a>
+      </form>
+    </template>
+
+    <template x-if="state === 'form'">
+      <form @submit.prevent="save">
+        <h1 x-text="info.purpose === 'invite' ? 'Crie sua senha' : 'Crie uma nova senha'"></h1>
+        <p class="small muted" style="margin:0" x-text="intro"></p>
+        <div class="field">
+          <label for="email">E-mail do acesso</label>
+          <input id="email" class="input" type="email" autocomplete="username" :value="info.email" readonly>
+        </div>
+        <div class="field">
+          <label for="pass">Senha nova</label>
+          <input id="pass" class="input" type="password" autocomplete="new-password" minlength="8" required x-model="password">
+          <span class="hint">Pelo menos 8 caracteres.</span>
+        </div>
+        <div class="field">
+          <label for="pass2">Repita a senha</label>
+          <input id="pass2" class="input" type="password" autocomplete="new-password" minlength="8" required x-model="confirm">
+        </div>
+        <p class="note red" x-show="error" x-text="error" style="margin:0"></p>
+        <button class="btn btn-dark btn-lg" :disabled="loading"><span class="spin" x-show="loading"></span> Criar senha</button>
+        <span class="small muted" x-text="`O link vale até ${until} e funciona uma vez só.`"></span>
+      </form>
+    </template>
+
+    <template x-if="state === 'done'">
+      <form @submit.prevent>
+        <h1>Senha criada</h1>
+        <p class="note green" style="margin:0">Pronto! Entre no painel com o e-mail <b x-text="email"></b> e a senha que você acabou de criar.</p>
+        <a class="btn btn-dark btn-lg" href="/app">Entrar no painel</a>
+      </form>
+    </template>
+  </div>
+</div>
+
+<script>
+  async function post(path, body) {
+    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Algo deu errado. Tente de novo.');
+    return data;
+  }
+
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('senha', () => ({
+      state: 'loading',
+      token: '',
+      info: null,
+      email: '',
+      password: '',
+      confirm: '',
+      error: '',
+      loading: false,
+
+      async init() {
+        this.token = decodeURIComponent(location.hash.replace(/^#/, ''));
+        try {
+          this.info = await post('/api/auth/link', { token: this.token });
+          this.state = 'form';
+        } catch (err) {
+          this.error = err.message;
+          this.state = 'invalid';
+        }
+      },
+
+      get intro() {
+        const name = this.info.name && !this.info.name.includes('@') ? `, ${this.info.name.split(/\s+/)[0]}` : '';
+        const where = this.info.restaurant ? ` (${this.info.restaurant})` : '';
+        return this.info.purpose === 'invite'
+          ? `Olá${name}! Crie a senha do seu acesso ao painel da Studio Coral${where}.`
+          : `Olá${name}! Crie uma senha nova para o seu acesso ao painel da Studio Coral${where}. A senha antiga deixa de valer.`;
+      },
+
+      get until() {
+        return new Date(this.info.expiresAt).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      },
+
+      async save() {
+        this.error = '';
+        if (this.password !== this.confirm) { this.error = 'As duas senhas não são iguais.'; return; }
+        this.loading = true;
+        try {
+          this.email = (await post('/api/auth/link/password', { token: this.token, password: this.password })).email;
+          this.password = '';
+          this.confirm = '';
+          this.state = 'done';
+        } catch (err) {
+          this.error = err.message;
+        } finally {
+          this.loading = false;
+        }
+      },
+    }));
+  });
+</script>
+</body>
+</html>

@@ -2,11 +2,13 @@ const { Container } = require('./container');
 const defaultConfig = require('./config');
 const { createRepositories } = require('./db/repositories');
 const { registerMessaging } = require('./messaging');
+const { registerMail } = require('./mail');
 const { EventBus } = require('./services/EventBus');
 const { TemplateService } = require('./services/TemplateService');
 const { DispatchService } = require('./services/DispatchService');
 const { AnalyticsService } = require('./services/AnalyticsService');
 const { AuthService } = require('./services/AuthService');
+const { AccessService } = require('./services/AccessService');
 const { MediaService } = require('./services/MediaService');
 const { ReportService } = require('./services/ReportService');
 const { PdfService } = require('./services/PdfService');
@@ -28,6 +30,14 @@ function buildContainer({ config = defaultConfig, db, logger = console, override
   c.register('repos', (x) => createRepositories(x.resolve('db')));
   c.register('events', () => new EventBus());
   c.register('auth', (x) => new AuthService({ config: x.resolve('config'), repos: x.resolve('repos') }));
+  registerMail(c);
+  c.register('access', (x) => new AccessService({
+    repos: x.resolve('repos'),
+    mail: x.resolve('mail'), // ← contrato de e-mail injetado
+    events: x.resolve('events'),
+    config: x.resolve('config'),
+    logger: x.resolve('logger'),
+  }));
   c.register('templates', (x) => new TemplateService({ settings: x.resolve('repos').settings }));
   c.register('media', (x) => new MediaService({ config: x.resolve('config') }));
   c.register('analytics', (x) => new AnalyticsService({ repos: x.resolve('repos') }));
