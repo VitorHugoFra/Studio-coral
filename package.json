@@ -23,7 +23,7 @@
     "pg": "8.23.1"
   },
   "optionalDependencies": {
-    "@wppconnect-team/wppconnect": "^2.3.4"
+    "@wppconnect-team/wppconnect": "^2.3.5"
   },
   "devDependencies": {
     "@electric-sql/pglite-socket": "0.2.11"
