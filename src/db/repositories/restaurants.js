@@ -3,8 +3,8 @@ const { Repository } = require('./base');
 
 const table = defineTable({
   name: 'restaurants',
-  columns: ['name', 'slug', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'logoUrl', 'menu', 'banners', 'requireApproval', 'demo'],
-  json: ['menu', 'banners'],
+  columns: ['name', 'slug', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'logoUrl', 'menu', 'banners', 'requireApproval', 'demo', 'referral'],
+  json: ['menu', 'banners', 'referral'],
   hidden: ['orderSeq'],
   unique: { restaurants_slug_key: 'Já existe um restaurante com este endereço.' },
 });

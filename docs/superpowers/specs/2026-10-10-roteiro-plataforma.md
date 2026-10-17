@@ -14,9 +14,9 @@ Registro das decisões tomadas com o Vitor antes de começar. Cada etapa tem o p
 | # | Etapa | Depende de | Situação |
 |---|---|---|---|
 | 1 | Banco de dados: tudo o que está no `data/db.json` passa para o PostgreSQL | — | concluída |
-| 2 | Pedidos e perfil de compra do cliente final, painel de pedidos do restaurante | 1 | implementada, aguardando conferência ([desenho](2026-10-16-etapa-2-pedidos-design.md)) |
-| 3 | Filtros de público, ficha do cliente e relatórios | 2 | implementada, aguardando conferência ([desenho](2026-10-16-etapa-3-filtros-design.md)) |
-| 4 | Indicação com desconto | 2 | a desenhar (decisões abaixo) |
+| 2 | Pedidos e perfil de compra do cliente final, painel de pedidos do restaurante | 1 | concluída ([desenho](2026-10-16-etapa-2-pedidos-design.md)) |
+| 3 | Filtros de público, ficha do cliente e relatórios | 2 | concluída ([desenho](2026-10-16-etapa-3-filtros-design.md)) |
+| 4 | Indicação com desconto | 2 | implementada, aguardando conferência ([desenho](2026-10-16-etapa-4-indicacao-design.md)) |
 | 5 | Pagamento online pelo site (Asaas) | 2 | a desenhar (decisões abaixo) |
 | 6 | Nota fiscal (Focus NFe) | 5 | a desenhar |
 | 7 | Documento de custos para publicar o sistema | — | pesquisa em andamento |

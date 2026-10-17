@@ -107,6 +107,13 @@
     .optin input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--c); flex: none; }
     .track { margin: 0 12px 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--c) 30%, #fff); display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13.5px; }
     .track a { color: var(--c); font-weight: 700; white-space: nowrap; }
+    a.track { color: inherit; text-decoration: none; }
+    a.track b { color: var(--c); white-space: nowrap; }
+    .coupon-row { display: grid; gap: 4px; }
+    .coupon-row .input { text-transform: uppercase; letter-spacing: .06em; }
+    .invite { display: grid; gap: 2px; border: 1.5px dashed var(--c); border-radius: 10px; padding: 12px; text-decoration: none; color: var(--txt); }
+    .invite b { color: var(--c); }
+    .invite span { font-size: 13px; color: var(--sub); }
     @media (max-width: 420px) {
       .grid-city { grid-template-columns: 1fr 64px; }
       .grid-city .field:first-child { grid-column: 1 / -1; }
@@ -157,6 +164,9 @@
             </div>
 
             <div class="track" x-show="lastOrder"><span x-text="lastOrder ? `Seu pedido #${lastOrder.number} ${lastOrder.label}.` : ''"></span><a :href="lastOrder ? `/pedido/${lastOrder.code}` : '#'">Acompanhar</a></div>
+
+            <template x-if="referral"><div class="hello"><span x-text="`Você foi indicado por ${referral.firstName}: ${referral.discount} de desconto no primeiro pedido${referral.minOrder ? ` acima de ${money(referral.minOrder)}` : ''}.`"></span></div></template>
+            <template x-if="!referral && r.referral"><a class="track" :href="`/indicar/${r.slug}`"><span x-text="`Indique para os amigos e ganhe ${r.referral.reward} de desconto.`"></span><b>Quero indicar</b></a></template>
 
             <div class="hello" x-show="ref || coupon">
               <span x-text="ref?.firstName ? `Olá, ${ref.firstName}! Seu cupom já entra no pedido.` : 'Pedindo pelo site você usa o cupom da casa.'"></span>
@@ -245,7 +255,12 @@
                   </div>
                 </template>
               </div>
-              <div class="line" x-show="discount"><span x-text="`Cupom ${coupon} (10%)`"></span><span x-text="'− ' + money(discount)"></span></div>
+              <div class="line" x-show="discount"><span x-text="discountLabel"></span><span x-text="'− ' + money(discount)"></span></div>
+              <p class="tiny muted" style="margin:0" x-show="referral && !referralDiscount" x-text="`O desconto da indicação de ${referral?.firstName} vale para pedidos a partir de ${money(referral?.minOrder)}.`"></p>
+              <div class="coupon-row">
+                <input class="input" x-model="couponCode" @input="couponCode = couponCode.toUpperCase()" placeholder="Tem um cupom?" aria-label="Código do cupom" maxlength="20">
+                <span class="tiny muted" x-show="couponCode">O cupom é conferido ao fazer o pedido. Os descontos não acumulam: vale o maior.</span>
+              </div>
               <div class="line" style="border:0"><b>Total</b><b style="font-size:20px" x-text="money(total)"></b></div>
 
               <h3 class="form-title">Seus dados</h3>
@@ -300,6 +315,11 @@
               <h2 x-text="`Pedido #${placed.number} recebido`"></h2>
               <p x-text="`Obrigado, ${customer.name.split(' ')[0]}. Total de ${money(placed.total)}.`"></p>
               <p class="small" x-show="ref">Como você veio pelo WhatsApp, este pedido já aparece no relatório da campanha.</p>
+              <p class="small" x-show="placed.discount" x-text="`Desconto aplicado: ${placed.coupon} (− ${money(placed.discount)}).`"></p>
+              <p class="small muted" x-show="placed.referral && !placed.referral.applied" x-text="placed.referral?.reason"></p>
+              <template x-if="r.referral">
+                <a class="invite" :href="`/indicar/${r.slug}`"><b x-text="`Indique e ganhe ${r.referral.reward}`"></b><span x-text="`Seus amigos ganham ${r.referral.discount} no primeiro pedido.`"></span></a>
+              </template>
               <a class="add-btn" style="justify-content:center;text-decoration:none;justify-self:stretch" :href="`/pedido/${placed.trackingCode}`">Acompanhar pedido</a>
               <button class="btn" style="justify-self:center" @click="reset">Fazer outro pedido</button>
             </div>
@@ -346,7 +366,7 @@ document.addEventListener('alpine:init', () => {
     customer: { name: '', phone: '', cpf: '', birthDay: '', birthMonth: '' },
     fulfillment: 'delivery',
     address: { cep: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '' },
-    notes: '', optIn: false, orderKey: '', cepHint: '', lastOrder: null,
+    notes: '', optIn: false, orderKey: '', cepHint: '', lastOrder: null, referral: null, couponCode: '',
     item: null, qty: 1, note: '',
     slide: 0, timer: null, active: '', q: '', searching: false, drawer: false, fontScale: 1,
 
@@ -368,6 +388,15 @@ document.addEventListener('alpine:init', () => {
       if (code) {
         const rr = await fetch(`/api/public/ref/${code}`);
         if (rr.ok) { this.ref = await rr.json(); if (!this.customer.name) this.customer.name = this.ref.firstName || ''; }
+      }
+      // Indicação: o link /i/… traz ?indicacao=; ela fica guardada no aparelho por 30 dias. ?cupom= preenche o cupom
+      const params = new URLSearchParams(location.search);
+      if (params.get('indicacao')) store.set(`sc_ind_${slug}`, { slug: params.get('indicacao'), at: Date.now() });
+      if (params.get('cupom')) this.couponCode = params.get('cupom').toUpperCase();
+      const ind = store.get(`sc_ind_${slug}`);
+      if (ind?.slug && Date.now() - ind.at < 30 * 864e5) {
+        const rf = await fetch(`/api/public/referrals/${slug}/${encodeURIComponent(ind.slug)}`).catch(() => null);
+        if (rf?.ok) { const info = await rf.json(); if (info.active) this.referral = info; }
       }
       this.checkLastOrder(slug);
       // Mudou a sacola, é outro pedido: a chave contra envio repetido recomeça
@@ -426,7 +455,16 @@ document.addEventListener('alpine:init', () => {
     qtyOf(m) { return this.cart.filter((x) => x.id === m.id).reduce((s, x) => s + x.qty, 0); },
     get count() { return this.cart.reduce((s, l) => s + l.qty, 0); },
     get subtotal() { return this.cart.reduce((s, l) => s + l.qty * l.price, 0); },
-    get discount() { return this.coupon ? Math.round(this.subtotal * 0.1 * 100) / 100 : 0; },
+    // Estimativa da sacola (o servidor confere): cupom da casa ou da campanha e indicação não acumulam, vale o maior
+    get houseDiscount() { return this.coupon ? Math.round(this.subtotal * 0.1 * 100) / 100 : 0; },
+    get referralDiscount() {
+      const f = this.referral;
+      if (!f || this.subtotal < (f.minOrder || 0)) return 0;
+      return f.discountType === 'percent' ? Math.round(this.subtotal * f.discountValue) / 100 : Math.min(f.discountValue, this.subtotal);
+    },
+    get referralWins() { return this.referralDiscount > 0 && this.referralDiscount >= this.houseDiscount; },
+    get discount() { return Math.max(this.houseDiscount, this.referralDiscount); },
+    get discountLabel() { return this.referralWins ? `Indicação de ${this.referral.firstName}` : `Cupom ${this.coupon} (10%)`; },
     get total() { return Math.max(0, this.subtotal - this.discount); },
     money: (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
     dec(l) { l.qty--; if (l.qty <= 0) this.cart = this.cart.filter((x) => x !== l); if (!this.cart.length) this.open = false; },
@@ -494,6 +532,8 @@ document.addEventListener('alpine:init', () => {
         address: this.fulfillment === 'delivery' ? { ...this.address } : null,
         notes: this.notes,
         marketingOptIn: this.optIn,
+        referral: this.referral?.slug || null,
+        couponCode: this.couponCode || null,
       };
       try {
         const res = await fetch('/api/public/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -507,7 +547,7 @@ document.addEventListener('alpine:init', () => {
         this.formError = 'Sem conexão. Confira a internet e tente de novo.';
       } finally { this.sending = false; }
     },
-    reset() { this.cart = []; this.placed = null; this.open = false; this.orderKey = ''; this.notes = ''; this.optIn = false; },
+    reset() { this.cart = []; this.placed = null; this.open = false; this.orderKey = ''; this.notes = ''; this.optIn = false; this.couponCode = ''; },
   }));
 });
 </script>

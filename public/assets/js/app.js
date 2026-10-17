@@ -249,6 +249,7 @@ document.addEventListener('alpine:init', () => {
     restaurantTab: 'diagnostico',
 
     board: [],
+    referralData: { links: [], coupons: [] },
     orders: [],
     orderFilter: { search: '', status: '', source: '', from: '', to: '' },
     orderModal: null,
@@ -446,7 +447,7 @@ document.addEventListener('alpine:init', () => {
     async onRoute() {
       const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
       let [name = 'painel', id, action] = parts;
-      const RESTAURANT_PAGES = ['painel', 'pedidos', 'campanhas', 'relatorios', ...(this.isManager ? ['acessos'] : [])];
+      const RESTAURANT_PAGES = ['painel', 'pedidos', 'indicacoes', 'campanhas', 'relatorios', ...(this.isManager ? ['acessos'] : [])];
       if (this.isRestaurant && (!RESTAURANT_PAGES.includes(name) || id === 'nova' || action === 'editar')) {
         name = 'painel'; id = undefined; action = undefined;
         history.replaceState(null, '', '#/painel');
@@ -468,6 +469,7 @@ document.addEventListener('alpine:init', () => {
         if (name === 'restaurantes') this.restaurants = await api('/restaurants');
         if (name === 'contatos') { if (params.id) await this.loadContactProfile(params.id); else await this.loadContacts(); }
         if (name === 'pedidos') await this.loadOrders();
+        if (name === 'indicacoes') await this.loadReferrals();
         if (name === 'acessos') await this.loadAccess();
         if (name === 'campanhas') {
           if (!params.id) await this.loadCampaigns();
@@ -555,6 +557,8 @@ document.addEventListener('alpine:init', () => {
       this.restaurantAccess = [];
       if (r?.id) api(`/users?restaurantId=${r.id}`).then((list) => { this.restaurantAccess = list; }).catch(() => {});
       this.restaurantModal = JSON.parse(JSON.stringify(r || this.blankRestaurant()));
+      // Programa de indicação: campos em branco quando ainda não foi configurado
+      this.restaurantModal.referral = { ...this.blankReferral(), ...(this.restaurantModal.referral || {}) };
     },
 
     /** Da ficha do restaurante para a tela de acessos, já filtrada nele. */
@@ -783,6 +787,30 @@ document.addEventListener('alpine:init', () => {
       if (m.readAt) return { label: 'Leu', cls: 'delivered' };
       return { label: MSG_STATUS[m.status] || m.status, cls: ['failed', 'skipped'].includes(m.status) ? 'failed' : 'queued' };
     },
+
+    // ── Indicação ──────────────────────────────────────────
+    blankReferral() {
+      return { enabled: false, discountType: 'fixed', discountValue: '', minOrder: '', validUntil: '', rewardType: 'fixed', rewardValue: '', rewardMinOrder: '', rewardValidDays: 30, inviteMessage: '', rewardMessage: '' };
+    },
+    async loadReferrals() {
+      this.referralData = await api(`/referrals${this.scope && !this.isRestaurant ? `?restaurantId=${this.scope}` : ''}`);
+    },
+    discountText(type, value) { return type === 'percent' ? `${String(value).replace('.', ',')}%` : fmt.money(value); },
+    couponState(c) {
+      if (c.usedAt) return { label: 'Usado', cls: 'completed' };
+      if (c.expiresAt && new Date(c.expiresAt) < new Date()) return { label: 'Vencido', cls: 'failed' };
+      if (c.sendError) return { label: 'Não enviado', cls: 'failed' };
+      if (c.sentAt) return { label: 'Enviado', cls: 'delivered' };
+      return { label: 'Enviando', cls: 'sending' };
+    },
+    async resendCoupon(c) {
+      try {
+        const saved = await api(`/coupons/${c.id}/resend`, { method: 'POST' });
+        this.toast(saved.sentAt && !saved.sendError ? 'Cupom reenviado.' : saved.sendError, saved.sendError ? 'Não enviado' : '');
+        await this.loadReferrals();
+      } catch (err) { this.error(err); }
+    },
+    copyText(text) { navigator.clipboard?.writeText(text).then(() => this.toast('Link copiado.'), () => {}); },
 
     // ── Pedidos ────────────────────────────────────────────
     ordersQuery(extra = {}) {

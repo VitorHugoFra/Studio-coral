@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const { maskUrl } = require('./db/Database');
 const { AuthService } = require('./services/AuthService');
+const { ReferralService } = require('./services/ReferralService');
 
 const DAY = 864e5;
 const FIRST = ['Marina', 'Lucas', 'Ana', 'Pedro', 'Juliana', 'Rafael', 'Camila', 'Bruno', 'Larissa', 'Thiago', 'Beatriz', 'Gustavo', 'Fernanda', 'Diego', 'Patrícia', 'Felipe', 'Aline', 'Rodrigo', 'Carolina', 'Mateus', 'Letícia', 'André', 'Gabriela', 'Vinícius', 'Isabela', 'Leonardo', 'Natália', 'Eduardo', 'Mariana', 'Henrique', 'Sofia', 'Daniel', 'Renata', 'Caio', 'Vanessa', 'Igor'];
@@ -414,8 +415,40 @@ async function seed(repos, { reset = false } = {}) {
         o.number = number;
         o.trackingCode = crypto.randomBytes(9).toString('base64url');
       }
-      await r.orders.insertMany(orderRows);
+      const savedOrders = await r.orders.insertMany(orderRows);
       await r.restaurants.update(restaurant, { orderSeq: number });
+
+      // Indicação (etapa 4), só na Cantina: três clientes fiéis indicaram amigos que fizeram o primeiro pedido pelo site
+      if (data.slug === 'cantina-bella-nonna') {
+        const rule = ReferralService.normalizeRule({ enabled: true, discountType: 'fixed', discountValue: 15, minOrder: 50, rewardType: 'percent', rewardValue: 20, rewardMinOrder: 40, rewardValidDays: 30 });
+        await r.restaurants.update(restaurant, { referral: rule });
+        const count = new Map();
+        for (const o of savedOrders) if (o.contactId) count.set(o.contactId, (count.get(o.contactId) || 0) + 1);
+        const fans = eligible.filter((c) => count.get(c.id) >= 5).slice(0, 3);
+        const links = [];
+        for (const [i, c] of fans.entries()) {
+          const slug = `${ReferralService.slugify(c.name.split(' ')[0])}-${i + 1}`;
+          links.push(await r.referrals.create({ restaurantId: restaurant.id, contactId: c.id, slug, name: c.name, phone: c.phone, message: '', editToken: crypto.randomBytes(18).toString('base64url'), clicks: 4 + Math.floor(orderRand() * 20), createdAt: iso(now - 80 * DAY) }));
+        }
+        // Primeiro pedido (do site, nos últimos 75 dias) de clientes que entraram depois: vira pedido indicado
+        const firstOf = new Map();
+        for (const o of savedOrders) if (o.contactId && !firstOf.has(o.contactId)) firstOf.set(o.contactId, o);
+        const referredOrders = [...firstOf.values()]
+          .filter((o) => o.source === 'site' && o.subtotal >= rule.minOrder && o.createdAt > iso(now - 75 * DAY) && !fans.some((f) => f.id === o.contactId))
+          .slice(0, 7);
+        for (const [i, o] of referredOrders.entries()) {
+          const link = links[i % links.length];
+          if (!link) break;
+          const updated = await r.orders.update(o.id, { source: 'referral', referralId: link.id, discount: rule.discountValue, coupon: `INDICAÇÃO ${link.name.split(' ')[0].toUpperCase()}`, value: Math.round((o.subtotal - rule.discountValue) * 100) / 100 });
+          if (updated.status !== 'completed') continue;
+          const at = new Date(updated.createdAt).getTime() + 60 * 60e3;
+          await r.coupons.create({
+            restaurantId: restaurant.id, contactId: link.contactId, referralId: link.id, code: ReferralService.newCode(),
+            discountType: rule.rewardType, discountValue: rule.rewardValue, minOrder: rule.rewardMinOrder,
+            expiresAt: iso(at + rule.rewardValidDays * DAY), originOrderId: updated.id, sentAt: iso(at), createdAt: iso(at),
+          });
+        }
+      }
 
       // Rascunho pronto para demonstrar o disparo ao vivo
       await r.campaigns.create({

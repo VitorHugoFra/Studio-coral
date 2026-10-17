@@ -21,6 +21,7 @@ function createPublicRoutes(container) {
   const messaging = container.resolve('messaging');
   const config = container.resolve('config');
   const orders = container.resolve('orders');
+  const referrals = container.resolve('referrals');
 
   const router = express.Router();
   const publicDir = path.join(__dirname, '..', '..', 'public');
@@ -67,7 +68,7 @@ function createPublicRoutes(container) {
 
   // ── Pedidos ────────────────────────────────────────────────
   router.post('/api/public/orders', userError(async (req, res) => {
-    const { order, duplicated } = await orders.placeSiteOrder(req.body || {});
+    const { order, duplicated, referral } = await orders.placeSiteOrder(req.body || {});
     return res.status(duplicated ? 200 : 201).json({
       ok: true,
       ...(duplicated ? { duplicated: true } : {}),
@@ -77,7 +78,9 @@ function createPublicRoutes(container) {
       trackingUrl: orders.trackingUrl(order),
       subtotal: order.subtotal,
       discount: order.discount,
+      coupon: order.coupon,
       total: order.value,
+      referral: referral || null,
     });
   }));
 
@@ -91,6 +94,43 @@ function createPublicRoutes(container) {
 
   router.get('/pedido/:code', (req, res) => res.sendFile(path.join(publicDir, 'pedido.html')));
 
+  // ── Indicação (etapa 4) ────────────────────────────────────
+  router.post('/api/public/referrals', userError(async (req, res) => {
+    const { restaurant, link, editToken, existing } = await referrals.createLink(req.body || {});
+    return res.status(existing ? 200 : 201).json(referrals.linkView(restaurant, link, existing ? { existing: true } : { editToken }));
+  }));
+
+  router.put('/api/public/referrals/:id', userError(async (req, res) => {
+    try {
+      const { restaurant, link } = await referrals.updateLink(req.params.id, req.body || {});
+      return res.json(referrals.linkView(restaurant, link));
+    } catch (err) {
+      if (err.status === 403) return res.status(403).json({ error: err.message });
+      throw err;
+    }
+  }));
+
+  router.get('/api/public/referrals/:restaurant/:slug', userError(async (req, res) => {
+    const { restaurant, link } = await referrals.resolve(req.params.restaurant, req.params.slug);
+    const program = referrals.publicInfo(restaurant);
+    return res.json({ slug: link.slug, firstName: String(link.name).split(/\s+/)[0], active: !!program, ...(program || {}) });
+  }));
+
+  // Link de indicação: conta o clique (pré-visualização de robô não conta) e leva ao site com a indicação
+  router.get('/i/:restaurant/:slug', wrap(async (req, res) => {
+    const restaurant = await repos.restaurants.bySlug(req.params.restaurant);
+    if (!restaurant) return res.redirect(302, '/');
+    const link = await repos.referrals.bySlug(restaurant.id, req.params.slug);
+    if (!link) return res.redirect(302, `/demo/${restaurant.slug}`);
+    if (!BOT_UA.test(req.headers['user-agent'] || '')) await repos.referrals.registerClick(link.id);
+    return res.redirect(302, `/demo/${restaurant.slug}?indicacao=${encodeURIComponent(link.slug)}`);
+  }));
+
+  router.get('/indicar/:slug', wrap(async (req, res) => {
+    if (!(await repos.restaurants.bySlug(req.params.slug))) return res.status(404).sendFile(path.join(publicDir, 'index.html'));
+    return res.sendFile(path.join(publicDir, 'indicar.html'));
+  }));
+
   // ── Pedidos de sites externos (script /t.js) ───────────────
   router.options('/api/public/conversions', cors);
   router.post('/api/public/conversions', cors, userError(async (req, res) => {
@@ -103,7 +143,7 @@ function createPublicRoutes(container) {
     const r = await repos.restaurants.bySlug(req.params.slug);
     if (!r) return res.status(404).json({ error: 'Restaurante não encontrado' });
     const { id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners, logoUrl } = r;
-    return res.json({ id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners: banners || [], logoUrl: logoUrl || null });
+    return res.json({ id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners: banners || [], logoUrl: logoUrl || null, referral: referrals.publicInfo(r) });
   }));
 
   router.get('/api/public/ref/:code', cors, wrap(async (req, res) => {

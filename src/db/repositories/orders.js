@@ -12,7 +12,7 @@ const table = defineTable({
   name: 'orders',
   columns: ['restaurantId', 'campaignId', 'messageId', 'contactId', 'code', 'customerName', 'orderId', 'value', 'items',
     'number', 'trackingCode', 'source', 'channel', 'status', 'statusLog', 'fulfillment', 'phone', 'cpf', 'address',
-    'neighborhood', 'notes', 'subtotal', 'discount', 'coupon'],
+    'neighborhood', 'notes', 'subtotal', 'discount', 'coupon', 'referralId', 'couponId'],
   json: ['items', 'statusLog', 'address'],
   numeric: ['value', 'subtotal', 'discount'],
   unique: {

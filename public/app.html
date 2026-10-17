@@ -80,6 +80,7 @@
       <a href="#/painel" :class="{ active: route.name === 'painel' }" @click="navOpen=false"><span x-html="icon('home')"></span> Painel</a>
       <a href="#/pedidos" :class="{ active: route.name === 'pedidos' }" @click="navOpen=false"><span x-html="icon('bag')"></span> Pedidos <span class="count" x-show="newOrders" x-text="newOrders" :aria-label="`${newOrders} pedidos novos`"></span></a>
       <a href="#/campanhas" :class="{ active: route.name === 'campanhas' }" @click="navOpen=false"><span x-html="icon('send')"></span> Campanhas <span class="count" x-show="isRestaurant && pendingApprovals.length" x-text="pendingApprovals.length"></span></a>
+      <a href="#/indicacoes" :class="{ active: route.name === 'indicacoes' }" @click="navOpen=false"><span x-html="icon('link')"></span> Indicações</a>
       <a href="#/relatorios" :class="{ active: route.name === 'relatorios' }" @click="navOpen=false"><span x-html="icon('calendar')"></span> Relatórios</a>
       <template x-if="isManager">
         <a href="#/acessos" :class="{ active: route.name === 'acessos' }" @click="navOpen=false"><span x-html="icon('users')"></span> Equipe</a>
@@ -126,9 +127,10 @@
         <template x-if="route.name === 'acessos' && isRestaurant"><div><h1>Equipe</h1><div class="sub" x-text="`Quem do ${user.restaurant} entra no painel`"></div></div></template>
         <template x-if="route.name === 'conexao'"><div><h1>Conexão</h1><div class="sub">Por onde as mensagens são enviadas</div></div></template>
         <template x-if="route.name === 'configuracoes'"><div><h1>Configurações</h1></div></template>
+        <template x-if="route.name === 'indicacoes'"><div><h1>Indicações</h1><div class="sub" x-text="`Links dos clientes e cupons de quem indicou · ${scopeName}`"></div></div></template>
         <template x-if="route.name === 'relatorios'"><div><h1>Relatórios mensais</h1><div class="sub">Resultado das campanhas do mês, pronto para enviar ao restaurante em PDF</div></div></template>
       </div>
-      <template x-if="!isRestaurant && ['painel','pedidos','campanhas','contatos','acessos'].includes(route.name) && !route.params.id">
+      <template x-if="!isRestaurant && ['painel','pedidos','indicacoes','campanhas','contatos','acessos'].includes(route.name) && !route.params.id">
         <select class="select" aria-label="Restaurante" :value="scope" @change="setScope($event.target.value)">
           <option value="">Todos os restaurantes</option>
           <template x-for="r in restaurants" :key="r.id"><option :value="r.id" x-text="r.name" :selected="r.id === scope"></option></template>
@@ -297,6 +299,54 @@
             </table>
             <template x-if="!orders.length"><div class="empty">Nenhum pedido neste filtro.</div></template>
             <div class="small muted" style="padding:10px 16px" x-show="orders.length" x-text="`${fmt.int(orders.length)} ${orders.length === 1 ? 'pedido' : 'pedidos'}${orders.length >= 200 ? ' (os 200 mais recentes; use os filtros para ver outros)' : ''}`"></div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ─────────── INDICAÇÕES ─────────── -->
+    <template x-if="route.name === 'indicacoes'">
+      <section class="stack orders-page">
+        <div class="card">
+          <div class="card-head"><h3>Links de indicação</h3><span class="small muted" x-text="`${referralData.links.length} ${referralData.links.length === 1 ? 'link' : 'links'}`"></span></div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Quem indica</th><th>Link</th><th class="num">Cliques</th><th class="num">Pedidos</th><th class="num hide-sm">Vendas</th><th class="num hide-sm">Cupons</th></tr></thead>
+              <tbody>
+                <template x-for="l in referralData.links" :key="l.id">
+                  <tr>
+                    <td><b x-text="l.name"></b><div class="tiny muted" x-text="[fmt.phone(l.phone), !scope && !isRestaurant ? l.restaurant : ''].filter(Boolean).join(' · ')"></div></td>
+                    <td class="small"><button class="btn btn-ghost btn-sm" style="padding-left:0" @click="copyText(l.url)" :title="l.url"><span x-html="icon('copy',14)"></span> <span x-text="`/i/…/${l.slug}`"></span></button></td>
+                    <td class="num" x-text="fmt.int(l.clicks)"></td>
+                    <td class="num" x-text="fmt.int(l.orders)"></td>
+                    <td class="num hide-sm" x-text="fmt.money(l.revenue)"></td>
+                    <td class="num hide-sm" x-text="fmt.int(l.rewards)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <template x-if="!referralData.links.length"><div class="empty">Nenhum cliente criou link ainda. Ligue o programa na ficha do restaurante (aba Indicação) e divulgue a página <b>/indicar/&lt;restaurante&gt;</b>.</div></template>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Cupons de quem indicou</h3><span class="small muted">gerados quando o pedido indicado é concluído</span></div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Cupom</th><th>Para</th><th class="hide-sm">Desconto</th><th class="hide-sm">Validade</th><th>Situação</th><th></th></tr></thead>
+              <tbody>
+                <template x-for="c in referralData.coupons" :key="c.id">
+                  <tr>
+                    <td><b class="mono" x-text="c.code"></b><div class="tiny muted" x-text="fmt.dateTime(c.createdAt)"></div></td>
+                    <td><span x-text="c.contactName || '—'"></span><div class="tiny muted" x-text="c.contactPhone ? fmt.phone(c.contactPhone) : ''"></div></td>
+                    <td class="hide-sm small" x-text="discountText(c.discountType, c.discountValue) + (c.minOrder ? ` · mín. ${fmt.money(c.minOrder)}` : '')"></td>
+                    <td class="hide-sm small" x-text="c.expiresAt ? new Date(c.expiresAt).toLocaleDateString('pt-BR') : 'sem prazo'"></td>
+                    <td><span class="status" :class="couponState(c).cls" x-text="couponState(c).label"></span><div class="tiny" style="color:var(--danger)" x-show="c.sendError && !c.usedAt" x-text="c.sendError"></div></td>
+                    <td style="text-align:right"><template x-if="!isRestaurant && !c.usedAt"><button class="btn btn-ghost btn-sm" @click="resendCoupon(c)">Reenviar</button></template></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <template x-if="!referralData.coupons.length"><div class="empty">Os cupons aparecem aqui quando o primeiro pedido de um indicado é concluído.</div></template>
           </div>
         </div>
       </section>
@@ -1128,6 +1178,7 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
           <button :class="{ on: restaurantTab==='diagnostico' }" @click="restaurantTab='diagnostico'">Dados</button>
           <button :class="{ on: restaurantTab==='estrategia' }" @click="restaurantTab='estrategia'">Público e objetivos</button>
           <button :class="{ on: restaurantTab==='cardapio' }" @click="restaurantTab='cardapio'" x-text="`Cardápio (${restaurantModal.menu.length})`"></button>
+          <button :class="{ on: restaurantTab==='indicacao' }" @click="restaurantTab='indicacao'">Indicação</button>
           <button :class="{ on: restaurantTab==='acesso' }" @click="restaurantTab='acesso'" x-show="restaurantModal.id">Acesso do restaurante</button>
         </div>
         <div x-show="restaurantTab==='diagnostico'" class="stack">
@@ -1163,6 +1214,32 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
           <div class="field"><label>Produtos principais</label><textarea class="textarea" style="min-height:66px" x-model="restaurantModal.products"></textarea></div>
           <div class="field"><label>Objetivos</label><textarea class="textarea" style="min-height:66px" x-model="restaurantModal.goals"></textarea></div>
           <div class="field"><label>Jeito de falar</label><input class="input" x-model="restaurantModal.tone"></div>
+        </div>
+        <div x-show="restaurantTab==='indicacao'" class="stack">
+          <label class="check"><input type="checkbox" x-model="restaurantModal.referral.enabled"> Programa de indicação ligado</label>
+          <p class="small muted" style="margin:0">O cliente cria o próprio link em <b x-text="restaurantModal.slug ? `/indicar/${restaurantModal.slug}` : '/indicar/<restaurante>'"></b>. O amigo ganha o desconto no primeiro pedido; quando esse pedido é concluído, quem indicou recebe um cupom de uso único pelo WhatsApp. Os descontos não acumulam: vale o maior.</p>
+          <fieldset class="ref-box">
+            <legend>Desconto do indicado</legend>
+            <div class="grid-3">
+              <div class="field"><label>Tipo</label><select class="select" x-model="restaurantModal.referral.discountType"><option value="fixed">R$</option><option value="percent">%</option></select></div>
+              <div class="field"><label>Valor</label><input class="input" inputmode="decimal" x-model="restaurantModal.referral.discountValue" placeholder="10"></div>
+              <div class="field"><label>Pedido mínimo (R$)</label><input class="input" inputmode="decimal" x-model="restaurantModal.referral.minOrder" placeholder="0"></div>
+            </div>
+            <div class="field" style="max-width:240px"><label>Programa vale até</label><input class="input" type="date" x-model="restaurantModal.referral.validUntil"><span class="hint">Em branco: sem data para acabar.</span></div>
+          </fieldset>
+          <fieldset class="ref-box">
+            <legend>Cupom de quem indicou</legend>
+            <div class="grid-2">
+              <div class="field"><label>Tipo</label><select class="select" x-model="restaurantModal.referral.rewardType"><option value="fixed">R$</option><option value="percent">%</option></select></div>
+              <div class="field"><label>Valor</label><input class="input" inputmode="decimal" x-model="restaurantModal.referral.rewardValue" placeholder="15"></div>
+            </div>
+            <div class="grid-2">
+              <div class="field"><label>Pedido mínimo (R$)</label><input class="input" inputmode="decimal" x-model="restaurantModal.referral.rewardMinOrder" placeholder="0"></div>
+              <div class="field"><label>Validade (dias)</label><input class="input" inputmode="numeric" x-model="restaurantModal.referral.rewardValidDays"></div>
+            </div>
+          </fieldset>
+          <div class="field"><label>Convite padrão</label><textarea class="textarea" x-model="restaurantModal.referral.inviteMessage" placeholder="Oi! Eu peço no {{restaurante}} e recomendo. Pelo meu link você ganha {{desconto}} no primeiro pedido pelo site: {{link}}"></textarea><span class="hint">Quando o cliente não escreve a própria mensagem. Variáveis: {{restaurante}}, {{desconto}}, {{link}}.</span></div>
+          <div class="field"><label>Mensagem do cupom</label><textarea class="textarea" x-model="restaurantModal.referral.rewardMessage" placeholder="Oi, {{primeiro_nome}}! {{indicado}} fez o primeiro pedido no {{restaurante}} pelo seu convite. Seu presente é o cupom *{{cupom}}*, de {{desconto}}{{minimo}}, válido até {{validade}}. Use no site: {{link}}"></textarea><span class="hint">Variáveis: {{primeiro_nome}}, {{indicado}}, {{restaurante}}, {{cupom}}, {{desconto}}, {{minimo}}, {{validade}}, {{link}}.</span></div>
         </div>
         <div x-show="restaurantTab==='acesso'" class="stack">
           <label class="check"><input type="checkbox" :checked="restaurantModal.requireApproval !== false" @change="restaurantModal.requireApproval = $event.target.checked"> Campanhas só são enviadas depois de aprovadas pelo restaurante</label>

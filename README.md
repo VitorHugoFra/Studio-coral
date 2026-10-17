@@ -8,6 +8,7 @@ Protótipo funcional do serviço de **disparo de mensagens de marketing personal
 | Painel da agência | `http://localhost:3000/app` |
 | Site próprio de demonstração do restaurante | `http://localhost:3000/demo/cantina-bella-nonna` |
 | Acompanhamento do pedido (cliente final) | `http://localhost:3000/pedido/:codigo` (o link aparece depois do pedido) |
+| Indique e ganhe (cliente final) | `http://localhost:3000/indicar/cantina-bella-nonna` |
 
 | Relatório mensal (A4/PDF) | `http://localhost:3000/relatorio?restaurantId=…&month=AAAA-MM` |
 
@@ -136,6 +137,15 @@ Os filtros usam o histórico de pedidos (sem os cancelados), calculado na hora:
 Todos valem juntos, e junto com as tags. Na campanha, ficam em **Público → Filtrar por compras**, com a contagem de quem recebe atualizando na hora; mudar os filtros zera a aprovação do restaurante, como mudar as tags. Os modelos "Cliente sumido", "Clientes frequentes" e "Aniversariante" já vêm com o filtro certo. Em **Contatos**, o mesmo botão filtra a lista.
 
 Clicar no nome de um contato abre a **ficha do cliente**: pedidos, total gasto, ticket médio, primeira e última compra, dia preferido, o que mais pede, o histórico de pedidos e as campanhas que recebeu (com leitura, clique e pedido). A ficha é só da agência, como a lista de contatos.
+
+## Indicação com desconto
+
+Na ficha do restaurante, aba **Indicação**, a agência liga o programa e define o desconto do indicado (R$ ou %), o pedido mínimo, até quando o programa vale, o cupom de quem indicou (valor, pedido mínimo e validade em dias) e as mensagens.
+
+- O cliente final cria o próprio link em `/indicar/<restaurante>`: nome, WhatsApp, apelido do link (`/i/<restaurante>/marina`) e a mensagem de convite, com botão para mandar no WhatsApp. Um link por telefone; só o aparelho que criou o link consegue mudar a mensagem.
+- Quem abre o link vê no site a faixa "Você foi indicado por Marina". O desconto vale só no **primeiro pedido daquele telefone** no restaurante (pedidos importados contam), acima do mínimo, e nunca para quem indicou. Os descontos não acumulam: vale o maior entre o cupom da casa ou da campanha, o da indicação e o cupom digitado.
+- Quando o pedido indicado é **concluído**, quem indicou ganha um cupom de uso único (8 caracteres), enviado pelo WhatsApp com a mensagem da regra. Pedido cancelado não gera cupom. O cupom é digitado no campo "Tem um cupom?" da sacola, ou já vem preenchido pelo link da mensagem.
+- Em **Indicações**, agência e restaurante veem os links (cliques, pedidos e vendas) e os cupons (enviado, usado, vencido ou não enviado); a agência pode reenviar um cupom.
 
 ## Pedidos (painel)
 

@@ -13,6 +13,7 @@ const { MediaService } = require('./services/MediaService');
 const { ReportService } = require('./services/ReportService');
 const { PdfService } = require('./services/PdfService');
 const { OrderService } = require('./services/OrderService');
+const { ReferralService } = require('./services/ReferralService');
 
 /**
  * Composição da aplicação (composition root).
@@ -40,7 +41,8 @@ function buildContainer({ config = defaultConfig, db, logger = console, override
   c.register('templates', (x) => new TemplateService({ settings: x.resolve('repos').settings }));
   c.register('media', (x) => new MediaService({ config: x.resolve('config') }));
   c.register('analytics', (x) => new AnalyticsService({ repos: x.resolve('repos') }));
-  c.register('orders', (x) => new OrderService({ repos: x.resolve('repos'), events: x.resolve('events'), config: x.resolve('config') }));
+  c.register('referrals', (x) => new ReferralService({ repos: x.resolve('repos'), messaging: x.resolve('messaging'), templates: x.resolve('templates'), config: x.resolve('config'), logger: x.resolve('logger') }));
+  c.register('orders', (x) => new OrderService({ repos: x.resolve('repos'), events: x.resolve('events'), config: x.resolve('config'), referrals: x.resolve('referrals'), logger: x.resolve('logger') }));
 
   c.register('reports', (x) => new ReportService({ repos: x.resolve('repos'), analytics: x.resolve('analytics') }));
   c.register('pdf', (x) => new PdfService({ config: x.resolve('config'), auth: x.resolve('auth'), logger: x.resolve('logger') }));
