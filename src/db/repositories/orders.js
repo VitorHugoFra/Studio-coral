@@ -12,8 +12,9 @@ const table = defineTable({
   name: 'orders',
   columns: ['restaurantId', 'campaignId', 'messageId', 'contactId', 'code', 'customerName', 'orderId', 'value', 'items',
     'number', 'trackingCode', 'source', 'channel', 'status', 'statusLog', 'fulfillment', 'phone', 'cpf', 'address',
-    'neighborhood', 'notes', 'subtotal', 'discount', 'coupon', 'referralId', 'couponId'],
-  json: ['items', 'statusLog', 'address'],
+    'neighborhood', 'notes', 'subtotal', 'discount', 'coupon', 'referralId', 'couponId',
+    'paymentMethod', 'paymentStatus', 'paymentProvider', 'paymentId', 'paymentUrl', 'paymentPix', 'paidAt', 'paymentError', 'paymentCheckedAt'],
+  json: ['items', 'statusLog', 'address', 'paymentPix'],
   numeric: ['value', 'subtotal', 'discount'],
   unique: {
     orders_tracking_code_key: 'Código de acompanhamento repetido.',
@@ -62,7 +63,8 @@ class OrdersRepo extends Repository {
     const where = ['TRUE'];
     const params = [];
     if (restaurantId) where.push(`restaurant_id = $${params.push(scopeId(restaurantId))}`);
-    if (active) where.push(`status = ANY($${params.push(ACTIVE_STATUSES)}::text[])`);
+    // O quadro só mostra o que a cozinha pode preparar: pedido online entra depois de pago
+    if (active) where.push(`status = ANY($${params.push(ACTIVE_STATUSES)}::text[]) AND payment_status <> 'pending'`);
     else if (status) where.push(`status = $${params.push(String(status))}`);
     if (source) where.push(`source = $${params.push(String(source))}`);
     if (from) where.push(`created_at >= $${params.push(from)}`);
@@ -80,6 +82,35 @@ class OrdersRepo extends Repository {
     const order = active ? 'created_at, id' : 'created_at DESC, id';
     const max = Math.min(Math.max(1, Number(limit) || 200), 500);
     return this.mapAll(await this.db.many(`SELECT * FROM orders WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ${max}`, params));
+  }
+
+  /** Pedidos online esperando o pagamento (aparecem fora do quadro). */
+  async awaitingPayment(restaurantId = null) {
+    return this.mapAll(await this.db.many("SELECT * FROM orders WHERE payment_status = 'pending' AND status <> 'canceled' AND ($1::uuid IS NULL OR restaurant_id = $1::uuid) ORDER BY created_at, id", [scopeId(restaurantId)]));
+  }
+
+  /** Pagamentos pendentes criados antes de um instante (varredura do prazo). */
+  pendingPaymentsBefore(cutoff) {
+    return this.where("payment_status = 'pending' AND created_at < $1", [cutoff], 'created_at, id');
+  }
+
+  byPaymentId(provider, paymentId) {
+    return paymentId ? this.first('payment_provider = $1 AND payment_id = $2', [provider, String(paymentId)]) : null;
+  }
+
+  /**
+   * Muda os dados do pagamento só se a situação ainda for uma das esperadas (webhook repetido, consulta e
+   * varredura ao mesmo tempo: só o primeiro vale).
+   */
+  async setPayment(target, { from, patch }) {
+    const id = target && typeof target === 'object' ? target.id : target;
+    if (!isUuid(id)) return null;
+    const map = this.table.toColumns({ ...patch, updatedAt: new Date().toISOString() });
+    const params = [id, from];
+    const sets = [...map].map(([col, value]) => `${col} = $${params.push(value)}`);
+    const row = this.map(await this.db.one(`UPDATE orders SET ${sets.join(', ')} WHERE id = $1 AND payment_status = ANY($2::text[]) RETURNING *`, params));
+    if (row && target && typeof target === 'object') Object.assign(target, row);
+    return row;
   }
 
   /**

@@ -147,6 +147,17 @@ Na ficha do restaurante, aba **Indicação**, a agência liga o programa e defin
 - Quando o pedido indicado é **concluído**, quem indicou ganha um cupom de uso único (8 caracteres), enviado pelo WhatsApp com a mensagem da regra. Pedido cancelado não gera cupom. O cupom é digitado no campo "Tem um cupom?" da sacola, ou já vem preenchido pelo link da mensagem.
 - Em **Indicações**, agência e restaurante veem os links (cliques, pedidos e vendas) e os cupons (enviado, usado, vencido ou não enviado); a agência pode reenviar um cupom.
 
+## Pagamento online (Asaas)
+
+Na ficha do restaurante, aba **Pagamento**, a agência liga o pagamento online, escolhe o provedor (**Simulador** para demonstrar, sem cobrar nada, ou **Asaas**), o ambiente (sandbox ou produção), cola a chave de API da conta Asaas **do restaurante** e escolhe Pix e/ou cartão, o prazo para pagar e a % de repasse para a agência. O dinheiro cai direto na conta do restaurante.
+
+- A chave fica guardada cifrada (AES-256-GCM, com `ENCRYPTION_KEY` do `.env`) e nunca volta para a tela; aparece só o final. **Defina `ENCRYPTION_KEY` em produção e não troque depois.**
+- No checkout, o cliente escolhe pagar na entrega/retirada, por **Pix** (QR Code e copia e cola na página do pedido) ou **cartão** (fatura do Asaas). Pagar online exige CPF.
+- O pedido online só entra em **Novos** depois de pago (com aviso e som). Antes, aparece em "Aguardando pagamento". Não pago no prazo, é cancelado sozinho e o cupom usado volta.
+- A confirmação vem pelo webhook do Asaas e, como reserva, pela própria página do pedido, que consulta o Asaas enquanto o pagamento está pendente. Para o webhook, cadastre no Asaas (Integrações → Webhooks) a URL e o token mostrados na aba Pagamento.
+- Cancelar um pedido pago estorna o valor. Se o estorno falhar, o pedido é cancelado e o erro aparece no detalhe.
+- Repasse para a agência: defina `AGENCY_ASAAS_WALLET_ID` e a % no restaurante (split do Asaas).
+
 ## Pedidos (painel)
 
 Em **Pedidos**, agência e restaurante veem os pedidos em tempo real (o restaurante, só os dele):

@@ -3,9 +3,9 @@ const { Repository } = require('./base');
 
 const table = defineTable({
   name: 'restaurants',
-  columns: ['name', 'slug', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'logoUrl', 'menu', 'banners', 'requireApproval', 'demo', 'referral'],
-  json: ['menu', 'banners', 'referral'],
-  hidden: ['orderSeq'],
+  columns: ['name', 'slug', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'logoUrl', 'menu', 'banners', 'requireApproval', 'demo', 'referral', 'payment'],
+  json: ['menu', 'banners', 'referral', 'payment', 'paymentSecret'],
+  hidden: ['orderSeq', 'paymentSecret'],
   unique: { restaurants_slug_key: 'Já existe um restaurante com este endereço.' },
 });
 
@@ -30,6 +30,12 @@ class RestaurantsRepo extends Repository {
   async nextOrderNumber(id) {
     if (!isUuid(id)) return null;
     return (await this.db.one('UPDATE restaurants SET order_seq = order_seq + 1 WHERE id = $1 RETURNING order_seq', [id]))?.order_seq ?? null;
+  }
+
+  /** Parte secreta do pagamento (chave cifrada): coluna interna, lida só por aqui. */
+  async paymentSecret(id) {
+    if (!isUuid(id)) return null;
+    return (await this.db.one('SELECT payment_secret FROM restaurants WHERE id = $1', [id]))?.payment_secret || null;
   }
 
   /** Contagens da lista de restaurantes: contatos, autorizados e campanhas. */

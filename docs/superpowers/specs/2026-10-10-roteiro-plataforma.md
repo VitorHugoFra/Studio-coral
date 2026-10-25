@@ -16,8 +16,8 @@ Registro das decisões tomadas com o Vitor antes de começar. Cada etapa tem o p
 | 1 | Banco de dados: tudo o que está no `data/db.json` passa para o PostgreSQL | — | concluída |
 | 2 | Pedidos e perfil de compra do cliente final, painel de pedidos do restaurante | 1 | concluída ([desenho](2026-10-16-etapa-2-pedidos-design.md)) |
 | 3 | Filtros de público, ficha do cliente e relatórios | 2 | concluída ([desenho](2026-10-16-etapa-3-filtros-design.md)) |
-| 4 | Indicação com desconto | 2 | implementada, aguardando conferência ([desenho](2026-10-16-etapa-4-indicacao-design.md)) |
-| 5 | Pagamento online pelo site (Asaas) | 2 | a desenhar (decisões abaixo) |
+| 4 | Indicação com desconto | 2 | concluída ([desenho](2026-10-16-etapa-4-indicacao-design.md)) |
+| 5 | Pagamento online pelo site (Asaas) | 2 | implementada, aguardando conferência ([desenho](2026-10-24-etapa-5-pagamento-design.md)) |
 | 6 | Nota fiscal (Focus NFe) | 5 | a desenhar |
 | 7 | Documento de custos para publicar o sistema | — | pesquisa em andamento |
 
@@ -50,7 +50,7 @@ Pedidos pelo Vitor: última compra (data e dias desde), quantidade de pedidos, a
 ### Pagamento (etapa 5)
 - Asaas, **na conta do próprio restaurante**: ele cola a chave de API no painel, que fica guardada criptografada. A agência não toca no dinheiro.
 - Opcional: repasse automático (split) de uma % para a agência.
-- A confirmar na pesquisa: se o Asaas exige CPF do cliente final para gerar a cobrança.
+- Confirmado na pesquisa: o Asaas exige CPF/CNPJ do cliente final para gerar a cobrança (o checkout pede o CPF quando o pagamento é online).
 
 ### Nota fiscal (etapa 6)
 - Focus NFe ou equivalente. Detalhes (quando emitir, dados fiscais do cardápio, certificado A1 e CSC de cada restaurante) ficam para o desenho da etapa.

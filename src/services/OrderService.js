@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const input = require('./orderInput');
 const { MessagingProvider } = require('../messaging/MessagingProvider');
+const { PaymentService } = require('./PaymentService');
 
 /** Caminho do pedido, na ordem. Cancelado fica fora: dá para cancelar de qualquer passo antes do fim. */
 const FLOW = ['new', 'preparing', 'dispatched', 'completed'];
@@ -22,11 +23,12 @@ class DuplicateOrder extends Error {}
  * pedidos de sites externos e importação de planilhas. As rotas só traduzem HTTP para cá.
  */
 class OrderService {
-  constructor({ repos, events, config, referrals = null, logger = console }) {
+  constructor({ repos, events, config, referrals = null, payments = null, logger = console }) {
     this.repos = repos;
     this.events = events;
     this.config = config;
     this.referrals = referrals; // indicação e cupons (etapa 4)
+    this.payments = payments; // pagamento online (etapa 5)
     this.logger = logger;
   }
 
@@ -80,6 +82,8 @@ class OrderService {
       orderId: orderKey ? `site-${orderKey}` : null,
       // Indicação (apelido do link) e cupom digitado: a regra fica no ReferralService
       referral: text(body.referral, 40).toLowerCase() || null,
+      // Forma de pagamento: na entrega/retirada (padrão), Pix ou cartão (etapa 5)
+      paymentMethod: String(body.payment || 'on_delivery'),
       couponCode: text(body.couponCode, 20).replace(/\s/g, '').toUpperCase() || null,
     };
   }
@@ -108,6 +112,8 @@ class OrderService {
     const restaurant = await this.repos.restaurants.bySlug(String(body.restaurantSlug || ''));
     if (!restaurant) throw notFound('Restaurante não encontrado.');
     const data = OrderService.checkout(body, restaurant);
+    data.paymentMethod = PaymentService.checkoutMethod(restaurant, data.paymentMethod, data.cpf);
+    const online = data.paymentMethod !== 'on_delivery';
 
     // Link da campanha: só vale se for do mesmo restaurante
     const ref = body.ref ? await this.repos.messages.byCode(String(body.ref)) : null;
@@ -146,6 +152,8 @@ class OrderService {
           trackingCode: crypto.randomBytes(9).toString('base64url'),
           source: picked.referralId ? 'referral' : message ? 'campaign' : 'site',
           status: 'new',
+          paymentMethod: data.paymentMethod,
+          paymentStatus: online ? 'pending' : 'none',
           statusLog: [{ status: 'new', at, by: null }],
           fulfillment: data.fulfillment,
           phone: data.phone,
@@ -166,6 +174,8 @@ class OrderService {
         if (message && !message.convertedAt) await r.messages.markConverted(message.id, created.createdAt);
         return created;
       });
+      // Online: a cobrança vem depois do pedido gravado; o quadro só recebe o pedido quando ele for pago
+      if (online) return { order: await this.payments.startCharge(order, restaurant), restaurant, duplicated: false, referral: picked.referral };
       this.events.publish('order', { ...order, restaurant: restaurant.name });
       return { order, restaurant, duplicated: false, referral: picked.referral };
     } catch (err) {
@@ -211,11 +221,17 @@ class OrderService {
     if (order.status === to) return order;
     if (FINAL.has(order.status)) throw invalid(order.status === 'canceled' ? 'Este pedido foi cancelado e não muda mais.' : 'Este pedido já foi concluído e não muda mais.');
     if (!OrderService.canMove(order.status, to)) throw invalid('O pedido só avança. Para desfazer, cancele.');
+    if (order.paymentStatus === 'pending' && to !== 'canceled') throw invalid('Este pedido ainda está esperando o pagamento do cliente.');
     const entry = { status: to, at: new Date().toISOString(), by: user?.name || null };
     const saved = await this.repos.orders.changeStatus(order, { from: order.status, to, entry });
     if (!saved) throw conflict('O pedido foi atualizado por outra pessoa. Recarregue para ver a situação atual.');
     this.events.publish('order:update', saved);
     // Pedido indicado concluído: o cupom de quem indicou. Falha aqui não desfaz a mudança de status
+    // Pedido pago cancelado: estorno total (o erro do estorno fica no pedido, sem desfazer o cancelamento)
+    if (to === 'canceled' && this.payments) {
+      if (saved.paymentStatus === 'paid') return this.payments.refundIfPaid(saved);
+      if (saved.paymentStatus === 'pending') return (await this.payments.closeUnpaid(saved, 'expired', 'Pedido cancelado pelo restaurante.')) || saved;
+    }
     if (to === 'completed' && saved.referralId && this.referrals) {
       try { await this.referrals.onOrderCompleted(saved); } catch (err) { this.logger.error('[indicação]', err); }
     }
@@ -238,6 +254,14 @@ class OrderService {
       coupon: order.coupon || null,
       total: order.value,
       restaurant: { name: restaurant.name, slug: restaurant.slug, color: restaurant.color, phone: restaurant.phone || null },
+      payment: {
+        method: order.paymentMethod || 'on_delivery',
+        status: order.paymentStatus || 'none',
+        url: order.paymentStatus === 'pending' ? order.paymentUrl : null,
+        pix: order.paymentStatus === 'pending' ? order.paymentPix : null,
+        simulated: order.paymentProvider === 'simulated',
+        paidAt: order.paidAt || null,
+      },
     };
   }
 

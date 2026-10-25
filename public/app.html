@@ -239,6 +239,15 @@
     <!-- ─────────── PEDIDOS ─────────── -->
     <template x-if="route.name === 'pedidos'">
       <section class="stack orders-page">
+        <template x-if="awaiting.length">
+          <div class="card card-pad awaiting">
+            <b x-text="awaiting.length === 1 ? '1 pedido aguardando pagamento' : `${awaiting.length} pedidos aguardando pagamento`"></b>
+            <span class="small muted">Entram em Novos assim que o pagamento for confirmado; os não pagos no prazo são cancelados sozinhos.</span>
+            <div class="row-wrap" style="gap:6px">
+              <template x-for="o in awaiting" :key="o.id"><button class="chip chip-toggle" @click="openOrder(o)" x-text="`${orderLabel(o)} · ${o.customerName || 'Cliente'} · ${fmt.money(o.value)} · ${fmt.rel(o.createdAt)}`"></button></template>
+            </div>
+          </div>
+        </template>
         <div class="board">
           <template x-for="col in boardColumns" :key="col.status">
             <div class="board-col" :class="col.status">
@@ -254,6 +263,7 @@
                       <li class="muted" x-show="o.items.length > 4" x-text="`+ ${o.items.length - 4} itens`"></li>
                     </ul>
                     <div class="row between" style="gap:8px"><span class="chip" x-text="fulfillmentText(o)"></span><b x-text="fmt.money(o.value)"></b></div>
+                    <div class="tiny" :class="o.paymentStatus === 'paid' ? 'paid-text' : 'muted'" x-text="paymentText(o)"></div>
                     <div class="tiny" style="color:var(--brown)" x-show="o.notes" x-text="`Obs.: ${o.notes}`"></div>
                     <button class="btn btn-sm btn-dark" @click.stop="advance(o)" x-text="nextLabel(o)"></button>
                   </article>
@@ -1179,6 +1189,7 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
           <button :class="{ on: restaurantTab==='estrategia' }" @click="restaurantTab='estrategia'">Público e objetivos</button>
           <button :class="{ on: restaurantTab==='cardapio' }" @click="restaurantTab='cardapio'" x-text="`Cardápio (${restaurantModal.menu.length})`"></button>
           <button :class="{ on: restaurantTab==='indicacao' }" @click="restaurantTab='indicacao'">Indicação</button>
+          <button :class="{ on: restaurantTab==='pagamento' }" @click="restaurantTab='pagamento'">Pagamento</button>
           <button :class="{ on: restaurantTab==='acesso' }" @click="restaurantTab='acesso'" x-show="restaurantModal.id">Acesso do restaurante</button>
         </div>
         <div x-show="restaurantTab==='diagnostico'" class="stack">
@@ -1240,6 +1251,36 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
           </fieldset>
           <div class="field"><label>Convite padrão</label><textarea class="textarea" x-model="restaurantModal.referral.inviteMessage" placeholder="Oi! Eu peço no {{restaurante}} e recomendo. Pelo meu link você ganha {{desconto}} no primeiro pedido pelo site: {{link}}"></textarea><span class="hint">Quando o cliente não escreve a própria mensagem. Variáveis: {{restaurante}}, {{desconto}}, {{link}}.</span></div>
           <div class="field"><label>Mensagem do cupom</label><textarea class="textarea" x-model="restaurantModal.referral.rewardMessage" placeholder="Oi, {{primeiro_nome}}! {{indicado}} fez o primeiro pedido no {{restaurante}} pelo seu convite. Seu presente é o cupom *{{cupom}}*, de {{desconto}}{{minimo}}, válido até {{validade}}. Use no site: {{link}}"></textarea><span class="hint">Variáveis: {{primeiro_nome}}, {{indicado}}, {{restaurante}}, {{cupom}}, {{desconto}}, {{minimo}}, {{validade}}, {{link}}.</span></div>
+        </div>
+        <div x-show="restaurantTab==='pagamento'" class="stack">
+          <label class="check"><input type="checkbox" x-model="restaurantModal.payment.enabled"> Pagamento online no site ligado</label>
+          <p class="small muted" style="margin:0">O dinheiro cai direto na conta Asaas do restaurante. O cliente paga por Pix (QR Code na página do pedido) ou cartão (fatura do Asaas), e o pedido só entra no quadro depois de pago. Pagar na entrega ou na retirada continua disponível.</p>
+          <div class="grid-2">
+            <div class="field"><label>Provedor</label><select class="select" x-model="restaurantModal.payment.provider"><option value="simulated">Simulador (demonstração, nada é cobrado)</option><option value="asaas">Asaas</option></select></div>
+            <div class="field" x-show="restaurantModal.payment.provider === 'asaas'"><label>Ambiente</label><select class="select" x-model="restaurantModal.payment.environment"><option value="sandbox">Sandbox (testes)</option><option value="production">Produção</option></select></div>
+          </div>
+          <div class="field" x-show="restaurantModal.payment.provider === 'asaas'">
+            <label>Chave de API do Asaas</label>
+            <input class="input" type="password" autocomplete="off" x-model="restaurantModal.payment.apiKey" :placeholder="restaurantModal.payment.hasKey ? `Chave cadastrada, terminada em ${restaurantModal.payment.apiKeyLast4}. Cole outra para trocar.` : 'Cole aqui a chave ($aact_…) da conta do restaurante'">
+            <span class="hint">Fica guardada cifrada e nunca é mostrada de novo. A chave e o ambiente precisam combinar (sandbox × produção).</span>
+          </div>
+          <div class="row-wrap" style="gap:16px">
+            <label class="check"><input type="checkbox" x-model="restaurantModal.payment.methods.pix"> Pix</label>
+            <label class="check"><input type="checkbox" x-model="restaurantModal.payment.methods.card"> Cartão de crédito</label>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label>Prazo para pagar (minutos)</label><input class="input" inputmode="numeric" x-model="restaurantModal.payment.timeoutMinutes"><span class="hint">Depois disso, o pedido não pago é cancelado.</span></div>
+            <div class="field"><label>Repasse para a agência (%)</label><input class="input" inputmode="decimal" x-model="restaurantModal.payment.splitPercent" placeholder="0"><span class="hint">Split automático do Asaas, para a carteira de AGENCY_ASAAS_WALLET_ID.</span></div>
+          </div>
+          <template x-if="restaurantModal.id && paymentInfo && restaurantModal.payment.provider === 'asaas'">
+            <div class="card card-pad stack" style="gap:8px">
+              <b>Webhook no Asaas</b>
+              <span class="small muted">No painel do Asaas do restaurante: Integrações → Webhooks → novo webhook de cobranças, com esta URL e este token de autenticação.</span>
+              <div class="field"><label>URL</label><input class="input mono" readonly :value="paymentInfo.webhookUrl" @focus="$event.target.select()"></div>
+              <div class="field"><label>Token de autenticação</label><input class="input mono" readonly :value="paymentInfo.webhookToken" @focus="$event.target.select()"></div>
+            </div>
+          </template>
+          <template x-if="restaurantModal.id"><button type="button" class="btn" style="justify-self:start" :disabled="paymentTesting" @click="testPayment"><span class="spin" x-show="paymentTesting"></span> Testar conexão (salve antes)</button></template>
         </div>
         <div x-show="restaurantTab==='acesso'" class="stack">
           <label class="check"><input type="checkbox" :checked="restaurantModal.requireApproval !== false" @change="restaurantModal.requireApproval = $event.target.checked"> Campanhas só são enviadas depois de aprovadas pelo restaurante</label>
@@ -1452,6 +1493,7 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
         <div class="row-wrap" style="gap:8px">
           <span class="status" :class="ORDER_CLASS[orderModal.status]" x-text="orderStatusLabel(orderModal)"></span>
           <span class="chip" x-text="ORDER_SOURCE[orderModal.source] + (orderModal.channel ? ` · ${orderModal.channel}` : '')"></span>
+          <template x-if="orderModal.fulfillment"><span class="chip" :class="{ 'chip-paid': orderModal.paymentStatus === 'paid' }" x-text="paymentText(orderModal)"></span></template>
           <span class="chip" x-show="orderModal.fulfillment" x-text="orderModal.fulfillment === 'pickup' ? 'Retirada no balcão' : 'Entrega'"></span>
           <span class="chip" x-show="orderModal.orderId && !orderModal.number" x-text="`Nº externo ${orderModal.orderId}`"></span>
         </div>
@@ -1464,6 +1506,7 @@ dispatch = new DispatchService({ <span class="k">messaging</span>, ... })</div>
             <div x-show="orderModal.address"><dt>Endereço</dt><dd x-text="addressText(orderModal.address)"></dd></div>
             <div x-show="!orderModal.address && orderModal.neighborhood"><dt>Bairro</dt><dd x-text="orderModal.neighborhood"></dd></div>
             <div x-show="orderModal.notes"><dt>Observações</dt><dd x-text="orderModal.notes"></dd></div>
+            <div x-show="orderModal.paymentError"><dt>Pagamento</dt><dd style="color:var(--danger)" x-text="orderModal.paymentError"></dd></div>
           </dl>
           <div>
             <table class="table order-lines">

@@ -248,3 +248,7 @@
 
 .ref-box { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 14px 12px; margin: 0; display: grid; gap: 10px; min-width: 0; }
 .ref-box legend { font-weight: 700; color: var(--green); padding: 0 6px; font-size: 14px; }
+
+.awaiting { display: grid; gap: 6px; border-left: 4px solid var(--yellow); }
+.chip-paid { background: #e3f0dc; color: var(--green-3); }
+.paid-text { color: var(--green-3); font-weight: 700; }

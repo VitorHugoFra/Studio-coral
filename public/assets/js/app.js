@@ -249,6 +249,9 @@ document.addEventListener('alpine:init', () => {
     restaurantTab: 'diagnostico',
 
     board: [],
+    awaiting: [],
+    paymentInfo: null,
+    paymentTesting: false,
     referralData: { links: [], coupons: [] },
     orders: [],
     orderFilter: { search: '', status: '', source: '', from: '', to: '' },
@@ -559,6 +562,11 @@ document.addEventListener('alpine:init', () => {
       this.restaurantModal = JSON.parse(JSON.stringify(r || this.blankRestaurant()));
       // Programa de indicação: campos em branco quando ainda não foi configurado
       this.restaurantModal.referral = { ...this.blankReferral(), ...(this.restaurantModal.referral || {}) };
+      // Pagamento online: a chave nunca volta da API; o campo começa vazio e só troca a chave se for preenchido
+      const pay = this.restaurantModal.payment || {};
+      this.restaurantModal.payment = { enabled: false, provider: 'simulated', environment: 'sandbox', splitPercent: '', timeoutMinutes: 30, ...pay, methods: { pix: true, card: false, ...(pay.methods || {}) }, apiKey: '' };
+      this.paymentInfo = null;
+      if (r?.id) api(`/restaurants/${r.id}/payment`).then((info) => { this.paymentInfo = info; }).catch(() => {});
     },
 
     /** Da ficha do restaurante para a tela de acessos, já filtrada nele. */
@@ -817,9 +825,25 @@ document.addEventListener('alpine:init', () => {
       const q = { ...(this.scope && !this.isRestaurant ? { restaurantId: this.scope } : {}), ...extra };
       return new URLSearchParams(Object.fromEntries(Object.entries(q).filter(([, v]) => v !== '' && v !== null && v !== undefined)));
     },
+    /** Situação do pagamento, para o quadro e o detalhe. */
+    paymentText(o) {
+      if (!o.paymentMethod || o.paymentMethod === 'on_delivery') return o.fulfillment === 'pickup' ? 'Paga na retirada' : 'Paga na entrega';
+      const how = o.paymentMethod === 'pix' ? 'Pix' : 'Cartão';
+      return { pending: `${how} pendente`, paid: `Pago · ${how}`, refunded: `Estornado · ${how}`, expired: `${how} não pago`, failed: `${how} falhou` }[o.paymentStatus] || how;
+    },
+    async testPayment() {
+      const r = this.restaurantModal;
+      if (!r?.id) return;
+      this.paymentTesting = true;
+      try {
+        const res = await api(`/restaurants/${r.id}/payment/test`, { method: 'POST' });
+        this.toast(`Conexão ok. Saldo: ${fmt.money(res.balance)}.`, 'Pagamento');
+      } catch (err) { this.error(err); } finally { this.paymentTesting = false; }
+    },
     async loadOrders() {
-      const [board, history] = await Promise.all([api(`/orders?${this.ordersQuery({ active: 1 })}`), api(`/orders?${this.ordersQuery(this.orderFilter)}`)]);
+      const [board, history, awaiting] = await Promise.all([api(`/orders?${this.ordersQuery({ active: 1 })}`), api(`/orders?${this.ordersQuery(this.orderFilter)}`), api(`/orders?${this.ordersQuery({ awaitingPayment: 1 })}`)]);
       this.board = board;
+      this.awaiting = awaiting;
       this.orders = history;
       this.newOrders = board.filter((o) => o.status === 'new').length;
     },

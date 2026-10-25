@@ -22,6 +22,7 @@ function createPublicRoutes(container) {
   const config = container.resolve('config');
   const orders = container.resolve('orders');
   const referrals = container.resolve('referrals');
+  const payments = container.resolve('payments');
 
   const router = express.Router();
   const publicDir = path.join(__dirname, '..', '..', 'public');
@@ -61,7 +62,8 @@ function createPublicRoutes(container) {
     try {
       return await fn(req, res);
     } catch (err) {
-      if (err.status === 400 || err.status === 404) return res.status(err.status).json({ error: err.message });
+      // 502: o gateway de pagamento falhou (a mensagem diz o que fazer)
+      if ([400, 404, 502].includes(err.status)) return res.status(err.status).json({ error: err.message });
       throw err;
     }
   });
@@ -81,15 +83,26 @@ function createPublicRoutes(container) {
       coupon: order.coupon,
       total: order.value,
       referral: referral || null,
+      payment: { method: order.paymentMethod, status: order.paymentStatus, url: order.paymentUrl, pix: order.paymentPix },
     });
   }));
 
   router.get('/api/public/orders/:code', wrap(async (req, res) => {
-    const order = await repos.orders.byTrackingCode(req.params.code);
-    const restaurant = order && await repos.restaurants.get(order.restaurantId);
-    if (!order || !restaurant) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    const found = await repos.orders.byTrackingCode(req.params.code);
+    const restaurant = found && await repos.restaurants.get(found.restaurantId);
+    if (!found || !restaurant) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    // Pagamento pendente: consulta o gateway de vez em quando (reserva do webhook)
+    const order = await payments.refresh(found);
     res.setHeader('Cache-Control', 'no-store');
     return res.json(orders.trackingView(order, restaurant));
+  }));
+
+  // Demonstração: confirma o pagamento de um pedido feito com o simulador de pagamento
+  router.post('/api/public/orders/:code/simulate-payment', userError(async (req, res) => {
+    const order = await repos.orders.byTrackingCode(req.params.code);
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    await payments.simulatePayment(order);
+    return res.json({ ok: true });
   }));
 
   router.get('/pedido/:code', (req, res) => res.sendFile(path.join(publicDir, 'pedido.html')));
@@ -143,7 +156,7 @@ function createPublicRoutes(container) {
     const r = await repos.restaurants.bySlug(req.params.slug);
     if (!r) return res.status(404).json({ error: 'Restaurante não encontrado' });
     const { id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners, logoUrl } = r;
-    return res.json({ id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners: banners || [], logoUrl: logoUrl || null, referral: referrals.publicInfo(r) });
+    return res.json({ id, name, slug, tagline, segment, city, color, coupon, menu, address, hours, phone, instagram, banners: banners || [], logoUrl: logoUrl || null, referral: referrals.publicInfo(r), payment: payments.publicInfo(r) });
   }));
 
   router.get('/api/public/ref/:code', cors, wrap(async (req, res) => {
@@ -176,6 +189,12 @@ function createPublicRoutes(container) {
     const challenge = provider.verifyWebhook(req.query);
     return challenge ? res.status(200).send(challenge) : res.sendStatus(403);
   });
+
+  // ── Webhook do Asaas (um por restaurante; token no cabeçalho asaas-access-token) ─
+  router.post('/webhooks/asaas/:restaurantId', wrap(async (req, res) => {
+    const status = await payments.handleAsaasWebhook(req.params.restaurantId, req.headers['asaas-access-token'], req.body || {});
+    return res.sendStatus(status);
+  }));
 
   router.post('/webhooks/whatsapp', (req, res) => {
     const provider = messaging.instance('whatsapp-cloud');
