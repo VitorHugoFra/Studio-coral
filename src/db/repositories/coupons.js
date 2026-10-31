@@ -30,6 +30,12 @@ class CouponsRepo extends Repository {
     return this.map(await this.db.one('UPDATE coupons SET used_at = $3, used_order_id = $2, updated_at = now() WHERE id = $1 AND used_at IS NULL RETURNING *', [id, orderId, at]));
   }
 
+  /** Devolve o cupom usado num pedido que não chegou a valer (pagamento não gerado ou vencido). */
+  async release(orderId) {
+    if (!isUuid(orderId)) return [];
+    return this.mapAll(await this.db.many('UPDATE coupons SET used_at = NULL, used_order_id = NULL, updated_at = now() WHERE used_order_id = $1 RETURNING *', [orderId]));
+  }
+
   async list(restaurantId = null) {
     const rows = await this.db.many(`
       SELECT k.*, c.name AS contact_name, c.phone AS contact_phone, l.slug AS referral_slug, r.name AS restaurant

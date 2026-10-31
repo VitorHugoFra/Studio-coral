@@ -14,6 +14,7 @@ const { ReportService } = require('./services/ReportService');
 const { PdfService } = require('./services/PdfService');
 const { OrderService } = require('./services/OrderService');
 const { ReferralService } = require('./services/ReferralService');
+const { PaymentService } = require('./services/PaymentService');
 
 /**
  * Composição da aplicação (composition root).
@@ -42,7 +43,10 @@ function buildContainer({ config = defaultConfig, db, logger = console, override
   c.register('media', (x) => new MediaService({ config: x.resolve('config') }));
   c.register('analytics', (x) => new AnalyticsService({ repos: x.resolve('repos') }));
   c.register('referrals', (x) => new ReferralService({ repos: x.resolve('repos'), messaging: x.resolve('messaging'), templates: x.resolve('templates'), config: x.resolve('config'), logger: x.resolve('logger') }));
-  c.register('orders', (x) => new OrderService({ repos: x.resolve('repos'), events: x.resolve('events'), config: x.resolve('config'), referrals: x.resolve('referrals'), logger: x.resolve('logger') }));
+  c.register('orders', (x) => new OrderService({ repos: x.resolve('repos'), events: x.resolve('events'), config: x.resolve('config'), referrals: x.resolve('referrals'), payments: x.resolve('payments'), logger: x.resolve('logger') }));
+  // Pagamento online (etapa 5); 'payments.factories' troca o Asaas nos testes
+  c.register('payments.factories', () => ({}));
+  c.register('payments', (x) => new PaymentService({ repos: x.resolve('repos'), config: x.resolve('config'), events: x.resolve('events'), logger: x.resolve('logger'), factories: x.resolve('payments.factories') }));
 
   c.register('reports', (x) => new ReportService({ repos: x.resolve('repos'), analytics: x.resolve('analytics') }));
   c.register('pdf', (x) => new PdfService({ config: x.resolve('config'), auth: x.resolve('auth'), logger: x.resolve('logger') }));

@@ -86,7 +86,7 @@ function fakeMail({ fail = false } = {}) {
  * O banco é o PGlite em memória; com TEST_PG=1 é um PostgreSQL local (PGlite numa porta TCP) acessado pelo driver `pg`, como em produção.
  * Devolve o cliente da agência já logado e um close() que desliga e apaga tudo.
  */
-async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null, logger = QUIET, mail = null } = {}) {
+async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson = null, logger = QUIET, mail = null, overrides: extra = {} } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coral-teste-'));
   if (legacyJson) fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify(legacyJson));
   const config = {
@@ -108,6 +108,7 @@ async function startApp({ seed = false, simulator = FAST_SIMULATOR, legacyJson =
   const overrides = {
     'messaging.factories': () => ({ simulator: () => new SimulatorProvider(simulator) }),
     ...(mail ? { mail: () => mail } : {}),
+    ...extra, // peças trocadas pelo teste (ex.: o gateway do Asaas)
   };
   let instance = null;
   let pg = null;

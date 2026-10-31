@@ -45,6 +45,14 @@
     .total { border-top: 1px solid #eee; padding-top: 8px; font-weight: 700; }
     .foot { text-align: center; color: #9a9a9a; font-size: 12px; padding: 6px 16px 28px; display: grid; gap: 12px; justify-items: center; }
     .back { display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--c); color: #fff; font-weight: 700; padding: 12px 20px; text-decoration: none; }
+    .pay { margin: 0 14px 14px; border: 1.5px solid var(--c); border-radius: 10px; padding: 16px; display: grid; gap: 12px; justify-items: center; text-align: center; }
+    .pix { display: grid; gap: 10px; justify-items: center; width: 100%; }
+    .pix img { width: 200px; height: 200px; image-rendering: pixelated; border: 1px solid #eee; border-radius: 8px; }
+    .copy { display: flex; gap: 8px; width: 100%; }
+    .copy .input { flex: 1; min-width: 0; font-size: 12px; }
+    .copy .back { padding: 10px 14px; border: 0; cursor: pointer; font: inherit; font-weight: 700; }
+    .sim { border: 1px dashed var(--c); background: #fff; color: var(--c); border-radius: 8px; padding: 10px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+    .paid-line { color: var(--sub); font-size: 13px; }
     .empty { min-height: 70vh; display: grid; place-items: center; text-align: center; color: var(--sub); padding: 24px; }
   </style>
 </head>
@@ -60,7 +68,22 @@
           <p x-text="subline"></p>
         </section>
 
-        <template x-if="o.status !== 'canceled'">
+        <template x-if="paying">
+          <section class="pay">
+            <template x-if="o.payment.pix">
+              <div class="pix">
+                <img :src="o.payment.pix.qrCode" alt="QR Code do Pix" width="200" height="200">
+                <div class="copy"><input class="input" readonly :value="o.payment.pix.copyPaste" aria-label="Pix copia e cola" @focus="$event.target.select()"><button type="button" class="back" @click="copyPix" x-text="copied ? 'Copiado' : 'Copiar'"></button></div>
+                <span class="small">Abra o app do banco, escolha Pix e leia o QR Code ou cole o código.</span>
+              </div>
+            </template>
+            <template x-if="o.payment.url"><a class="back" :href="o.payment.url" target="_blank" rel="noopener">Pagar com cartão</a></template>
+            <template x-if="o.payment.simulated"><button type="button" class="sim" @click="simulate" x-text="`Simular pagamento com ${payLabel} (demonstração)`"></button></template>
+            <span class="small muted">Esta página confirma sozinha quando o pagamento chegar.</span>
+          </section>
+        </template>
+
+        <template x-if="o.status !== 'canceled' && !paying">
           <ol class="steps" aria-label="Andamento do pedido">
             <template x-for="(s, i) in steps" :key="s.status">
               <li :class="{ done: i < current || o.status === 'completed', now: i === current && o.status !== 'completed' }">
@@ -79,6 +102,8 @@
           </template>
           <div class="line" x-show="o.discount"><span x-text="o.coupon ? `Cupom ${o.coupon}` : 'Desconto'"></span><span x-text="'− ' + money(o.discount)"></span></div>
           <div class="line total"><span>Total</span><span x-text="money(o.total)"></span></div>
+          <template x-if="['paid', 'refunded'].includes(o.payment.status)"><div class="paid-line" x-text="o.payment.status === 'paid' ? `Pago com ${payLabel}.` : `Pago com ${payLabel} e estornado.`"></div></template>
+          <template x-if="o.payment.method === 'on_delivery'"><div class="paid-line" x-text="o.fulfillment === 'pickup' ? 'Pagamento na retirada.' : 'Pagamento na entrega.'"></div></template>
         </div>
 
         <footer class="foot">
@@ -103,9 +128,27 @@ document.addEventListener('alpine:init', () => {
   Alpine.data('tracking', () => ({
     o: null, missing: false, checkedAt: '', timer: null,
 
+    copied: false,
+
     async init() {
       await this.load();
-      if (this.o && !this.finished) this.timer = setInterval(() => this.load(), 15000);
+      this.schedule();
+    },
+
+    // Pagamento pendente: consulta mais vezes, para confirmar logo depois do Pix
+    schedule() {
+      if (!this.o || this.finished) return;
+      this.timer = setTimeout(async () => { await this.load(); this.schedule(); }, this.paying ? 5000 : 15000);
+    },
+    get paying() { return this.o?.payment?.status === 'pending'; },
+    get payLabel() { return { pix: 'Pix', card: 'cartão' }[this.o?.payment?.method] || ''; },
+    copyPix() {
+      navigator.clipboard?.writeText(this.o.payment.pix.copyPaste).then(() => { this.copied = true; setTimeout(() => { this.copied = false; }, 2000); }, () => {});
+    },
+    async simulate() {
+      const code = location.pathname.split('/').filter(Boolean).pop();
+      await fetch(`/api/public/orders/${encodeURIComponent(code)}/simulate-payment`, { method: 'POST' });
+      await this.load();
     },
 
     async load() {
@@ -117,7 +160,7 @@ document.addEventListener('alpine:init', () => {
         this.o = await res.json();
         this.checkedAt = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         document.title = `${this.headline} · ${this.o.restaurant.name}`;
-        if (this.finished) clearInterval(this.timer);
+        if (this.finished) clearTimeout(this.timer);
       } catch { /* sem conexão: tenta de novo na próxima consulta */ }
     },
 
@@ -129,10 +172,14 @@ document.addEventListener('alpine:init', () => {
 
     get headline() {
       if (this.o.status === 'canceled') return 'Pedido cancelado';
+      if (this.paying) return 'Aguardando pagamento';
       return this.labels[this.o.status] || 'Pedido recebido';
     },
     get subline() {
       const name = this.o.firstName ? `${this.o.firstName}, ` : '';
+      if (this.o.status === 'canceled' && ['expired', 'failed'].includes(this.o.payment?.status)) return `${name}o pagamento não foi feito no prazo, então o pedido não seguiu. Você pode fazer um novo pedido no cardápio.`;
+      if (this.o.status === 'canceled' && this.o.payment?.status === 'refunded') return `${name}o pedido foi cancelado e o valor pago foi estornado.`;
+      if (this.paying) return `${name}o pedido vai para a cozinha assim que o pagamento for confirmado.`;
       if (this.o.status === 'canceled') return `${name}fale com o restaurante${this.o.restaurant.phone ? ` pelo ${this.o.restaurant.phone}` : ''} para saber mais.`;
       if (this.o.status === 'completed') return `${name}obrigado pela preferência!`;
       if (this.o.status === 'dispatched') return this.o.fulfillment === 'pickup' ? `${name}seu pedido está esperando no balcão.` : `${name}seu pedido está a caminho${this.o.neighborhood ? ` (${this.o.neighborhood})` : ''}.`;

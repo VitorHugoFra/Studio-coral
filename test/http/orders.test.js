@@ -175,7 +175,7 @@ describe('pedidos: checkout, contato, painel, acompanhamento e importação', ()
     const view = await pub().get(`/api/public/orders/${res.data.trackingCode}`);
     assert.equal(view.status, 200);
     assert.equal(view.headers.get('cache-control'), 'no-store');
-    assert.deepEqual(Object.keys(view.data).sort(), ['coupon', 'createdAt', 'discount', 'firstName', 'fulfillment', 'items', 'neighborhood', 'number', 'restaurant', 'status', 'statusLog', 'subtotal', 'total'].sort());
+    assert.deepEqual(Object.keys(view.data).sort(), ['coupon', 'createdAt', 'discount', 'firstName', 'fulfillment', 'items', 'neighborhood', 'number', 'payment', 'restaurant', 'status', 'statusLog', 'subtotal', 'total'].sort());
     assert.equal(view.data.firstName, 'Bruno');
     assert.equal(view.data.status, 'new');
     assert.equal(view.data.neighborhood, 'Funcionários');

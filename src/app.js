@@ -82,6 +82,9 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
     dispatch = container.resolve('dispatch');
     const messaging = container.resolve('messaging');
     await dispatch.init();
+    // Pagamentos pendentes com prazo vencido são cancelados de tempos em tempos (etapa 5)
+    const payments = container.resolve('payments');
+    payments.start();
 
     // Reconecta automaticamente o provedor ativo (no WPPConnect usa a sessão salva)
     const { session, tokensDir } = config.messaging.wppconnect;
@@ -101,6 +104,7 @@ async function createApp({ config = defaultConfig, overrides = {}, seed = true, 
       async close() {
         const atMost = (ms, promise) => Promise.race([promise, new Promise((r) => { setTimeout(r, ms).unref(); })]);
         dispatch.stop();
+        payments.stop();
         // Espera o envio em andamento (no máximo 3 s) antes de desligar o canal
         await atMost(3000, dispatch.idle());
         // Fecha o navegador do WPPConnect mantendo a sessão salva

@@ -25,6 +25,14 @@ module.exports = {
   },
   sessionSecret: env('SESSION_SECRET', 'studio-coral-dev-secret'),
 
+  // Pagamento online (etapa 5). ENCRYPTION_KEY cifra as chaves de API dos restaurantes: sem ela, deriva do
+  // SESSION_SECRET. Trocar depois exige recadastrar as chaves. AGENCY_ASAAS_WALLET_ID recebe o repasse (split).
+  payments: {
+    encryptionKey: env('ENCRYPTION_KEY', ''),
+    agencyWalletId: env('AGENCY_ASAAS_WALLET_ID', ''),
+    sweepSeconds: Number(env('PAYMENT_SWEEP_SECONDS', 60)),
+  },
+
   // E-mail dos convites e do "esqueci minha senha" (src/mail). 'none': os links aparecem na tela de acessos
   mail: {
     provider: env('MAIL_PROVIDER', 'none'),

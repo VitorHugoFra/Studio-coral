@@ -21,7 +21,7 @@ const stable = (value) => JSON.stringify(value, (_key, v) => (v && typeof v === 
   ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
   : v));
 
-const RESTAURANT_FIELDS = ['name', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'menu', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'requireApproval', 'banners', 'logoUrl', 'referral'];
+const RESTAURANT_FIELDS = ['name', 'segment', 'city', 'siteUrl', 'phone', 'audience', 'products', 'goals', 'tone', 'color', 'coupon', 'menu', 'tagline', 'instagram', 'emoji', 'address', 'hours', 'requireApproval', 'banners', 'logoUrl', 'referral', 'payment'];
 const CAMPAIGN_FIELDS = ['name', 'restaurantId', 'objective', 'occasion', 'message', 'mediaUrl', 'destinationUrl', 'coupon', 'segment', 'includeFooter', 'cloudTemplate', 'notes'];
 
 /** Rotas autenticadas do painel (/api/*). */
@@ -41,6 +41,7 @@ function createApi(container) {
   const access = container.resolve('access');
   const orderService = container.resolve('orders');
   const referralService = container.resolve('referrals');
+  const paymentService = container.resolve('payments');
 
   const router = express.Router();
   // Códigos SQLSTATE têm 5 caracteres (maiúsculas e dígitos); os códigos da mensageria são minúsculos.
@@ -175,6 +176,8 @@ function createApi(container) {
   router.post('/restaurants', wrap(async (req, res) => {
     const data = pick(req.body || {}, RESTAURANT_FIELDS);
     if (data.referral !== undefined) data.referral = ReferralService.normalizeRule(data.referral);
+    // Pagamento: a chave colada vira a parte secreta cifrada (payment_secret), que nunca volta na resposta
+    if (data.payment !== undefined) Object.assign(data, await paymentService.configPatch(null, data.payment));
     if (!data.name?.trim()) throw new Error('Informe o nome do restaurante.');
     const r = await repos.restaurants.create({ color: '#73350c', emoji: '🍽️', menu: [], ...data, slug: await uniqueSlug(data.name) });
     res.status(201).json(await withCountsOne(r));
@@ -185,8 +188,23 @@ function createApi(container) {
     if (!r) throw notFound('Restaurante não encontrado');
     const data = pick(req.body || {}, RESTAURANT_FIELDS);
     if (data.referral !== undefined) data.referral = ReferralService.normalizeRule(data.referral);
+    if (data.payment !== undefined) Object.assign(data, await paymentService.configPatch(r, data.payment));
     if (data.name && data.name !== r.name) data.slug = await uniqueSlug(data.name, r.id);
     res.json(await withCountsOne(await repos.restaurants.update(r, data)));
+  }));
+
+  // Pagamento do restaurante (só a agência): URL e token do webhook para cadastrar no Asaas, e teste da chave
+  router.get('/restaurants/:id/payment', wrap(async (req, res) => {
+    const r = await repos.restaurants.get(req.params.id);
+    if (!r) throw notFound('Restaurante não encontrado');
+    res.json({ payment: r.payment || null, webhookUrl: paymentService.webhookUrl(r.id), webhookToken: paymentService.webhookToken(r.id) });
+  }));
+
+  router.post('/restaurants/:id/payment/test', wrap(async (req, res) => {
+    const r = await repos.restaurants.get(req.params.id);
+    if (!r) throw notFound('Restaurante não encontrado');
+    if (!r.payment) throw new Error('Salve a configuração do pagamento antes de testar.');
+    res.json(await paymentService.testConnection(r));
   }));
 
   router.delete('/restaurants/:id', wrap(async (req, res) => {
@@ -343,6 +361,8 @@ function createApi(container) {
 
   router.get('/orders', wrap(async (req, res) => {
     const { status, source, search, from, to, active, limit } = req.query;
+    // Pedidos online esperando o pagamento (ficam fora do quadro)
+    if (req.query.awaitingPayment === '1') return res.json(await orderViews(await repos.orders.awaitingPayment(scopeOf(req, req.query.restaurantId))));
     const list = await repos.orders.list({
       restaurantId: scopeOf(req, req.query.restaurantId),
       status,

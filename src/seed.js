@@ -421,7 +421,9 @@ async function seed(repos, { reset = false } = {}) {
       // Indicação (etapa 4), só na Cantina: três clientes fiéis indicaram amigos que fizeram o primeiro pedido pelo site
       if (data.slug === 'cantina-bella-nonna') {
         const rule = ReferralService.normalizeRule({ enabled: true, discountType: 'fixed', discountValue: 15, minOrder: 50, rewardType: 'percent', rewardValue: 20, rewardMinOrder: 40, rewardValidDays: 30 });
-        await r.restaurants.update(restaurant, { referral: rule });
+        // Pagamento online pelo simulador (etapa 5): Pix e cartão na demonstração, sem cobrar nada
+        const payment = { enabled: true, provider: 'simulated', environment: 'sandbox', methods: { pix: true, card: true }, splitPercent: null, timeoutMinutes: 30, apiKeyLast4: null, hasKey: false };
+        await r.restaurants.update(restaurant, { referral: rule, payment });
         const count = new Map();
         for (const o of savedOrders) if (o.contactId) count.set(o.contactId, (count.get(o.contactId) || 0) + 1);
         const fans = eligible.filter((c) => count.get(c.id) >= 5).slice(0, 3);

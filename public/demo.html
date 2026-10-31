@@ -100,6 +100,7 @@
     .seg button.on { background: var(--c); color: #fff; font-weight: 600; }
     .grid-cep { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: end; }
     .cep-hint { margin: 0 0 10px; }
+    .seg.seg-3 { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
     .grid-street { display: grid; grid-template-columns: 1fr 96px; gap: 10px; }
     .grid-city { display: grid; grid-template-columns: 1fr 1fr 64px; gap: 10px; }
     .grid-bday { display: grid; grid-template-columns: 84px 1fr; gap: 8px; }
@@ -256,10 +257,10 @@
                 </template>
               </div>
               <div class="line" x-show="discount"><span x-text="discountLabel"></span><span x-text="'− ' + money(discount)"></span></div>
-              <p class="tiny muted" style="margin:0" x-show="referral && !referralDiscount" x-text="`O desconto da indicação de ${referral?.firstName} vale para pedidos a partir de ${money(referral?.minOrder)}.`"></p>
+              <template x-if="referral && !referralDiscount"><p class="tiny muted" style="margin:0" x-text="`O desconto da indicação de ${referral?.firstName} vale para pedidos a partir de ${money(referral?.minOrder)}.`"></p></template>
               <div class="coupon-row">
                 <input class="input" x-model="couponCode" @input="couponCode = couponCode.toUpperCase()" placeholder="Tem um cupom?" aria-label="Código do cupom" maxlength="20">
-                <span class="tiny muted" x-show="couponCode">O cupom é conferido ao fazer o pedido. Os descontos não acumulam: vale o maior.</span>
+                <template x-if="couponCode"><span class="tiny muted">O cupom é conferido ao fazer o pedido. Os descontos não acumulam: vale o maior.</span></template>
               </div>
               <div class="line" style="border:0"><b>Total</b><b style="font-size:20px" x-text="money(total)"></b></div>
 
@@ -294,7 +295,7 @@
                 </div>
               </template>
               <div class="grid-2">
-                <div class="field"><label for="c-cpf">CPF <span class="opt">(opcional, para nota fiscal)</span></label><input id="c-cpf" class="input" inputmode="numeric" placeholder="000.000.000-00" x-model="customer.cpf" @input="customer.cpf = maskCpf(customer.cpf)"></div>
+                <div class="field"><label for="c-cpf">CPF <span class="opt" x-text="payMethod === 'on_delivery' ? '(opcional, para nota fiscal)' : '(obrigatório para pagar online)'"></span></label><input id="c-cpf" class="input" inputmode="numeric" placeholder="000.000.000-00" x-model="customer.cpf" @input="customer.cpf = maskCpf(customer.cpf)"></div>
                 <div class="field">
                   <label>Aniversário <span class="opt">(opcional)</span></label>
                   <div class="grid-bday">
@@ -304,6 +305,17 @@
                 </div>
               </div>
               <div class="field"><label for="o-notes">Observações do pedido <span class="opt">(opcional)</span></label><textarea id="o-notes" x-model="notes" maxlength="500" placeholder="Ex.: troco para R$ 100, tocar o interfone"></textarea></div>
+              <template x-if="r.payment">
+                <div class="field">
+                  <label>Pagamento</label>
+                  <div class="seg seg-3" role="radiogroup" aria-label="Forma de pagamento">
+                    <button type="button" role="radio" :aria-checked="payMethod === 'on_delivery'" :class="{ on: payMethod === 'on_delivery' }" @click="payMethod = 'on_delivery'" x-text="fulfillment === 'pickup' ? 'Na retirada' : 'Na entrega'"></button>
+                    <template x-if="r.payment.methods.includes('pix')"><button type="button" role="radio" :aria-checked="payMethod === 'pix'" :class="{ on: payMethod === 'pix' }" @click="payMethod = 'pix'">Pix agora</button></template>
+                    <template x-if="r.payment.methods.includes('card')"><button type="button" role="radio" :aria-checked="payMethod === 'card'" :class="{ on: payMethod === 'card' }" @click="payMethod = 'card'">Cartão</button></template>
+                  </div>
+                  <template x-if="payMethod !== 'on_delivery'"><span class="tiny muted" x-text="`O pedido vai para a cozinha assim que o pagamento é confirmado. Você tem ${r.payment.timeoutMinutes} minutos para pagar.`"></span></template>
+                </div>
+              </template>
               <label class="optin"><input type="checkbox" x-model="optIn"><span>Quero receber as promoções deste restaurante pelo WhatsApp. Dá para sair quando quiser, respondendo SAIR.</span></label>
               <p class="note red" style="margin:0" x-show="formError" x-text="formError" role="alert"></p>
               <button class="add-btn" :disabled="sending" style="justify-content:center"><span class="spin" x-show="sending"></span> Fazer pedido</button>
@@ -366,7 +378,7 @@ document.addEventListener('alpine:init', () => {
     customer: { name: '', phone: '', cpf: '', birthDay: '', birthMonth: '' },
     fulfillment: 'delivery',
     address: { cep: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '' },
-    notes: '', optIn: false, orderKey: '', cepHint: '', lastOrder: null, referral: null, couponCode: '',
+    notes: '', optIn: false, orderKey: '', cepHint: '', lastOrder: null, referral: null, couponCode: '', payMethod: 'on_delivery',
     item: null, qty: 1, note: '',
     slide: 0, timer: null, active: '', q: '', searching: false, drawer: false, fontScale: 1,
 
@@ -534,12 +546,15 @@ document.addEventListener('alpine:init', () => {
         marketingOptIn: this.optIn,
         referral: this.referral?.slug || null,
         couponCode: this.couponCode || null,
+        payment: this.payMethod,
       };
       try {
         const res = await fetch('/api/public/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) { this.formError = data.error || 'Não foi possível enviar o pedido. Tente de novo.'; return; }
         this.placed = data;
+        // Pagamento online: a página de acompanhamento mostra o Pix (ou o link do cartão) e confirma sozinha
+        if (data.payment?.status === 'pending') { location.href = `/pedido/${data.trackingCode}`; }
         store.set(`sc_cliente_${this.r.slug}`, { name: this.customer.name, phone: this.customer.phone, address: this.address, fulfillment: this.fulfillment });
         store.set(`sc_pedido_${this.r.slug}`, { code: data.trackingCode, at: Date.now() });
         this.lastOrder = { code: data.trackingCode, number: data.number, label: ACTIVE.new };
