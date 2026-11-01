@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Solway:wght@400;700;800&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: false });</script>
+<style>
+  body { margin: 0; background: #f7f0e6; font-family: 'Open Sans', sans-serif; color: #1d1710; }
+  .wrap { width: 2360px; padding: 48px 56px 56px; }
+  h1 { font-family: Solway, serif; font-weight: 800; font-size: 46px; margin: 0; color: #092b03; }
+  .sub { font-size: 21px; color: #463729; margin: 8px 0 28px; }
+  .panel { background: #fffdf9; border: 2px solid #dcc8b2; border-radius: 18px; padding: 24px 28px; }
+  .panel svg { width: 100% !important; max-width: none !important; height: auto; }
+</style>
+</head>
+<body>
+<div class="wrap" id="cap">
+  <h1>Visão técnica: de uma campanha a um pedido pago</h1>
+  <div class="sub">Sequência das chamadas, com as rotas reais. As linhas tracejadas são respostas ou avisos que chegam depois.</div>
+  <div class="panel">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant AG as Agência / Restaurante
+  participant PA as Painel (/app)
+  participant SV as Servidor (Express + serviços)
+  participant DB as PostgreSQL
+  participant WA as WhatsApp (provedor)
+  participant CL as Cliente final
+  participant AS as Asaas
+
+  AG->>PA: monta a campanha (mensagem, foto, cupom, filtros)
+  PA->>SV: POST /api/campaigns
+  AG->>PA: restaurante aprova
+  PA->>SV: aprovação, depois "Enviar"
+  SV->>DB: público = tags + filtros de compra<br/>1 mensagem por contato, com código único
+  loop DispatchService · horário comercial e limite diário
+    SV->>WA: send() com nome, cupom e PUBLIC_URL/r/código
+    WA->>CL: mensagem no WhatsApp
+    WA-->>SV: /webhooks/whatsapp · enviada, entregue, lida
+  end
+  CL->>SV: GET /r/:código
+  SV->>DB: registra o clique
+  SV-->>CL: 302 para o site com sc_ref e UTM
+  CL->>SV: POST /api/public/orders (itens, cupom, sc_ref, forma de pagamento)
+  SV->>DB: cria ou atualiza o contato pelo telefone<br/>grava o pedido atribuído à campanha
+  alt Pix ou cartão
+    SV->>AS: /customers, /payments, /pixQrCode
+    SV-->>CL: resposta com o QR Code do Pix ou o link da fatura (cartão)
+    CL->>AS: paga no app do banco ou na fatura do Asaas
+    AS-->>SV: POST /webhooks/asaas/:restaurante (pago)
+    Note over SV,AS: reserva: consulta a cada 15 s<br/>sem pagamento no prazo, cancela e devolve o cupom
+  else Paga na entrega
+    Note over SV: segue direto
+  end
+  SV-->>PA: SSE "order": pedido entra no quadro
+  AG->>PA: muda o status (em preparo, saiu, entregue)
+  CL->>SV: GET /api/public/orders/:código (página de acompanhamento)
+  opt Pedido veio de indicação
+    SV->>WA: cupom de uso único para quem indicou
+  end
+  Note over SV,CL: se o cliente responde SAIR, o contato é descadastrado e não recebe mais mensagens
+</pre>
+  </div>
+</div>
+<script>
+  window.render = async () => {
+    mermaid.initialize({
+      startOnLoad: false, theme: 'base',
+      themeVariables: {
+        fontFamily: 'Open Sans, sans-serif', fontSize: '18px',
+        primaryColor: '#fffdf9', primaryBorderColor: '#092b03', primaryTextColor: '#1d1710', lineColor: '#463729',
+        actorBkg: '#092b03', actorBorder: '#092b03', actorTextColor: '#ffffff', actorLineColor: '#b99a74',
+        signalColor: '#463729', signalTextColor: '#1d1710',
+        labelBoxBkgColor: '#73350c', labelBoxBorderColor: '#73350c', labelTextColor: '#ffffff', loopTextColor: '#463729',
+        noteBkgColor: '#fff3cc', noteBorderColor: '#ffb800', noteTextColor: '#1d1710',
+        activationBkgColor: '#f1e5d7', sequenceNumberColor: '#ffffff',
+      },
+      sequence: { useMaxWidth: true, actorFontSize: 18, messageFontSize: 17, noteFontSize: 16, boxMargin: 10, messageMargin: 34, actorMargin: 90, mirrorActors: false, wrap: false },
+    });
+    await mermaid.run({ querySelector: '.mermaid' });
+  };
+</script>
+</body>
+</html>

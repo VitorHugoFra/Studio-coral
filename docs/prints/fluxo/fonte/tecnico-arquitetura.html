@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Solway:wght@400;700;800&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --brown:#73350c; --green:#092b03; --green-3:#2f6421; --yellow:#ffb800; --sand-2:#f1e5d7; --paper:#f7f0e6; --white:#fffdf9; --ink:#1d1710; --ink-2:#463729; --line:#dcc8b2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); font-family: 'Open Sans', sans-serif; color: var(--ink); }
+  .wrap { width: 2360px; padding: 48px 56px 56px; }
+  h1 { font-family: Solway, serif; font-weight: 800; font-size: 46px; margin: 0; color: var(--green); }
+  .sub { font-size: 21px; color: var(--ink-2); margin: 8px 0 28px; }
+  .board { position: relative; display: grid; grid-template-columns: 360px 400px 520px 520px; column-gap: 112px; background: var(--white); border: 2px solid var(--line); border-radius: 18px; padding: 30px 34px 34px; }
+  .col { display: flex; flex-direction: column; gap: 18px; }
+  .col > h2 { font-family: Solway, serif; font-size: 22px; color: #fff; margin: 0 0 4px; padding: 10px 16px; border-radius: 10px; }
+  .a > h2 { background: #a8761a; } .b > h2 { background: var(--brown); } .c > h2 { background: var(--green); } .d > h2 { background: var(--green-3); }
+  .grow { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 18px; }
+  .box { position: relative; z-index: 2; background: #fff; border: 2px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: 0 5px 14px rgba(29,23,16,.07); }
+  .box b { display: block; font-family: Solway, serif; font-size: 19px; color: var(--green); margin-bottom: 4px; }
+  .box span { display: block; font-size: 15px; line-height: 1.4; color: var(--ink-2); }
+  .box code, .chip code, .legend code { font-family: Consolas, monospace; font-size: 14px; background: var(--sand-2); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+  .a .box { border-color: #c9952b; } .b .box { border-color: var(--brown); } .d .box { border-color: var(--green-3); }
+  .group { position: relative; z-index: 2; border: 2px dashed #b99a74; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 12px; background: #fbf6ef; }
+  .group .box { border-color: var(--green); padding: 11px 14px; }
+  .group .box b { font-size: 17.5px; }
+  .group .box span { font-size: 14px; }
+  .chip { margin-top: 10px; background: #fff7dd; border: 1.5px solid var(--yellow); border-radius: 8px; padding: 7px 10px; font-size: 13.5px; line-height: 1.4; color: var(--ink-2); }
+  .db { border-radius: 40px / 18px; }
+  svg.arrows { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: visible; }
+  .lbl { font-family: Consolas, monospace; font-size: 13px; fill: var(--ink); }
+  .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 24px; }
+  .legend div { background: var(--white); border: 2px solid var(--line); border-left: 8px solid var(--yellow); border-radius: 12px; padding: 16px 20px; font-size: 17px; line-height: 1.45; color: var(--ink-2); }
+  .legend b { display: block; font-family: Solway, serif; font-size: 19px; color: var(--green); margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="cap">
+  <h1>Visão técnica: as peças e como se ligam</h1>
+  <div class="sub">Node 22 + Express, PostgreSQL e páginas em HTML com Alpine.js (sem etapa de build). WhatsApp e pagamento ficam atrás de contratos: trocar de fornecedor é escrever outra classe.</div>
+
+  <div class="board" id="board">
+    <div class="col a">
+      <h2>Navegador</h2>
+      <div class="grow">
+        <div class="box" id="painel"><b>Painel</b><span><code>/app</code> · agência e restaurante<br>Alpine.js · chama <code>/api/*</code> · recebe SSE</span></div>
+        <div class="box" id="rel"><b>Relatório mensal</b><span><code>/relatorio</code> · vira PDF</span></div>
+        <div class="box" id="site"><b>Site do restaurante</b><span><code>/demo/:slug</code> · cardápio, sacola e checkout<br>envia <code>POST /api/public/orders</code></span></div>
+        <div class="box" id="acomp"><b>Acompanhar pedido</b><span><code>/pedido/:código</code> · <code>GET /api/public/orders/:código</code></span></div>
+        <div class="box" id="ind"><b>Indique e ganhe</b><span><code>/indicar/:slug</code> · <code>/i/:rest/:slug</code><br>usa <code>/api/public/referrals</code></span></div>
+      </div>
+    </div>
+
+    <div class="col b">
+      <h2>Servidor · Express</h2>
+      <div class="grow">
+        <div class="box" id="api"><b>API autenticada</b><span><code>/api/*</code><br>sessão por cookie · papéis agência e restaurante</span></div>
+        <div class="box" id="pub"><b>Rotas públicas</b><span><code>/r/:código</code> link rastreável<br><code>/api/public/*</code> pedidos e indicações<br><code>/webhooks/whatsapp</code><br><code>/webhooks/asaas/:restaurante</code></span></div>
+      </div>
+    </div>
+
+    <div class="col c">
+      <h2>Serviços</h2>
+      <div class="group" id="svc">
+        <div class="box" id="disp"><b>DispatchService</b><span>fila de envio · horário comercial · limite diário · SAIR</span></div>
+        <div class="box" id="tpl"><b>TemplateService</b><span>nome, cupom, link e variações de texto</span></div>
+        <div class="box" id="ord"><b>OrderService</b><span>pedidos · contato pelo telefone · cupons · atribuição à campanha</span></div>
+        <div class="box" id="pays"><b>PaymentService</b><span>cobrança · prazo para pagar · estorno no cancelamento</span></div>
+        <div class="box" id="ref"><b>ReferralService</b><span>links de indicação · cupom de uso único</span></div>
+        <div class="box" id="rep"><b>ReportService + PdfService</b><span>números do mês · PDF com Puppeteer</span></div>
+        <div class="box" id="evt"><b>EventBus</b><span>eventos em tempo real → SSE para o painel</span></div>
+      </div>
+    </div>
+
+    <div class="col d">
+      <h2>Dados e integrações</h2>
+      <div class="grow">
+        <div class="box" id="wa"><b>WhatsApp · MessagingProvider</b><span>API Oficial da Meta · WPPConnect · Simulador</span>
+          <div class="chip">↩ responde em <code>/webhooks/whatsapp</code>: enviada, entregue, lida e respostas como SAIR</div></div>
+        <div class="box db" id="db"><b>PostgreSQL</b><span><code>DATABASE_URL</code> em produção · PGlite em desenvolvimento e testes<br>SQL à mão em repositórios · migrations numeradas</span></div>
+        <div class="box" id="asaas"><b>Pagamentos · PaymentGateway</b><span>Asaas API v3, na conta do restaurante · Simulador<br><code>/customers</code> · <code>/payments</code> · <code>/pixQrCode</code> · <code>/refund</code><br>chave de API cifrada (AES-256-GCM)</span>
+          <div class="chip">↩ confirma em <code>/webhooks/asaas/:restaurante</code>; reserva: consulta a cada 15 s</div></div>
+      </div>
+    </div>
+
+    <svg class="arrows" id="arrows"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#463729"/></marker></defs></svg>
+  </div>
+
+  <div class="legend">
+    <div><b>Link rastreável</b>Cada mensagem leva <code>PUBLIC_URL/r/:código</code>. O servidor conta o clique e redireciona para o site com <code>sc_ref</code>, que liga o pedido à campanha.</div>
+    <div><b>Tempo real</b>Pedido pago (ou para pagar na entrega) vira evento no <code>EventBus</code> e chega ao painel por SSE, sem recarregar a página.</div>
+    <div><b>Configuração</b>Tudo por variáveis de ambiente: <code>PUBLIC_URL</code>, <code>DATABASE_URL</code>, <code>SESSION_SECRET</code>, <code>ENCRYPTION_KEY</code>, <code>MESSAGING_PROVIDER</code>.</div>
+  </div>
+</div>
+<script>
+  window.drawArrows = () => {
+    const board = document.getElementById('board').getBoundingClientRect();
+    const svg = document.getElementById('arrows');
+    const r = (id) => document.getElementById(id).getBoundingClientRect();
+    const edge = (from, to, label) => {
+      const a = r(from), b = r(to);
+      const x1 = a.right - board.left, y1 = a.top + a.height / 2 - board.top;
+      const x2 = b.left - board.left - 3, y2 = b.top + b.height / 2 - board.top;
+      const dx = (x2 - x1) * 0.5;
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', `M${x1} ${y1} C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`);
+      p.setAttribute('fill', 'none'); p.setAttribute('stroke', '#463729'); p.setAttribute('stroke-width', '2.5'); p.setAttribute('marker-end', 'url(#ah)');
+      svg.appendChild(p);
+      if (label) {
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('class', 'lbl'); t.setAttribute('x', (x1 + x2) / 2); t.setAttribute('y', (y1 + y2) / 2 - 8); t.setAttribute('text-anchor', 'middle');
+        t.textContent = label;
+        svg.appendChild(t);
+        const bb = t.getBBox();
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        bg.setAttribute('x', bb.x - 5); bg.setAttribute('y', bb.y - 2); bg.setAttribute('width', bb.width + 10); bg.setAttribute('height', bb.height + 4); bg.setAttribute('rx', 4); bg.setAttribute('fill', '#fff7dd');
+        svg.insertBefore(bg, t);
+      }
+    };
+    edge('painel', 'api');
+    edge('rel', 'api');
+    edge('site', 'pub');
+    edge('acomp', 'pub');
+    edge('ind', 'pub');
+    edge('api', 'svc');
+    edge('pub', 'svc');
+    edge('svc', 'db');
+    edge('disp', 'wa');
+    edge('pays', 'asaas');
+  };
+</script>
+</body>
+</html>
