@@ -4,3 +4,6 @@ data/
 
 # Fonte com licença só para uso pessoal: não redistribuir
 public/fonts/hemgjord-lettering.*
+
+# Cache do Visual Studio
+.vs/

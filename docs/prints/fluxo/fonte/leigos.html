@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Solway:wght@400;700;800&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --brown:#73350c; --green:#092b03; --green-2:#16420c; --green-3:#2f6421; --yellow:#ffb800; --sand:#e8d6c4; --sand-2:#f1e5d7; --paper:#f7f0e6; --white:#fffdf9; --ink:#1d1710; --ink-2:#463729; --muted:#7d6853; --line:#dcc8b2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); font-family: 'Open Sans', sans-serif; color: var(--ink); }
+  .wrap { width: 2360px; padding: 48px 56px 56px; position: relative; }
+  header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 28px; }
+  h1 { font-family: Solway, serif; font-weight: 800; font-size: 46px; margin: 0; color: var(--green); }
+  .sub { font-size: 21px; color: var(--ink-2); margin-top: 8px; }
+  .brand { height: 64px; }
+  .board { position: relative; display: grid; grid-template-columns: 190px repeat(10, 1fr); grid-template-rows: repeat(4, 210px); border-radius: 18px; overflow: hidden; border: 2px solid var(--line); background: var(--white); }
+  .lane { grid-column: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 20px; color: #fff; font-family: Solway, serif; font-weight: 700; font-size: 22px; line-height: 1.15; }
+  .lane small { display: block; font-family: 'Open Sans', sans-serif; font-weight: 400; font-size: 14px; opacity: .85; margin-top: 6px; }
+  .row-bg { grid-column: 2 / -1; border-bottom: 1px dashed var(--line); }
+  .row-bg.alt { background: #fbf6ef; }
+  .l1 { background: var(--green); } .l2 { background: var(--brown); } .l3 { background: #a8761a; } .l4 { background: var(--green-3); }
+  .card { position: relative; z-index: 2; align-self: center; justify-self: center; width: 180px; min-height: 150px; background: #fff; border: 2px solid var(--line); border-radius: 14px; padding: 14px 14px 12px; box-shadow: 0 6px 18px rgba(29,23,16,.08); }
+  .card .n { position: absolute; top: -16px; left: 14px; width: 34px; height: 34px; border-radius: 50%; background: var(--yellow); color: var(--ink); font-family: Solway, serif; font-weight: 800; font-size: 18px; display: grid; place-items: center; border: 2px solid #fff; }
+  .card h3 { font-family: Solway, serif; font-size: 18.5px; margin: 10px 0 6px; color: var(--green); line-height: 1.15; }
+  .card p { margin: 0; font-size: 14px; line-height: 1.38; color: var(--ink-2); }
+  .card.c1 { border-color: var(--green); } .card.c2 { border-color: var(--brown); } .card.c3 { border-color: #c9952b; } .card.c4 { border-color: var(--green-3); }
+  svg.arrows { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  .notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 28px; }
+  .note { background: var(--white); border: 2px solid var(--line); border-left: 8px solid var(--yellow); border-radius: 12px; padding: 18px 22px; font-size: 17px; line-height: 1.45; color: var(--ink-2); }
+  .note b { color: var(--green); font-family: Solway, serif; font-size: 19px; display: block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="cap">
+  <header>
+    <div>
+      <h1>Como funciona: da mensagem no WhatsApp ao pedido</h1>
+      <div class="sub">Quem faz o quê em cada passo. As setas mostram a ordem.</div>
+    </div>
+  </header>
+
+  <div class="board" id="board">
+    <div class="lane l1" style="grid-row:1">Agência<small>Studio Coral</small></div>
+    <div class="lane l2" style="grid-row:2">Restaurante<small>dono e equipe</small></div>
+    <div class="lane l3" style="grid-row:3">Cliente final<small>quem compra</small></div>
+    <div class="lane l4" style="grid-row:4">Plataforma<small>faz sozinha</small></div>
+    <div class="row-bg" style="grid-row:1"></div>
+    <div class="row-bg alt" style="grid-row:2"></div>
+    <div class="row-bg" style="grid-row:3"></div>
+    <div class="row-bg alt" style="grid-row:4; border-bottom:0"></div>
+
+    <div class="card c1" data-step="1" style="grid-row:1;grid-column:2"><span class="n">1</span><h3>Monta a campanha</h3><p>Mensagem, foto, cupom e quem recebe: quem sumiu, aniversariantes, quem mais pede.</p></div>
+    <div class="card c2" data-step="2" style="grid-row:2;grid-column:3"><span class="n">2</span><h3>Aprova</h3><p>Confere no painel e aprova ou pede ajuste. Sem aprovação, nada sai.</p></div>
+    <div class="card c4" data-step="3" style="grid-row:4;grid-column:4"><span class="n">3</span><h3>Envia no WhatsApp</h3><p>Uma a uma, no horário comercial, só para quem autorizou. Cada um com o nome e um link só dele.</p></div>
+    <div class="card c3" data-step="4" style="grid-row:3;grid-column:5"><span class="n">4</span><h3>Toca no link</h3><p>Abre o site do restaurante, com o cardápio e o cupom.</p></div>
+    <div class="card c3" data-step="5" style="grid-row:3;grid-column:6"><span class="n">5</span><h3>Faz o pedido</h3><p>Entrega ou retirada. Paga na entrega, no Pix ou no cartão.</p></div>
+    <div class="card c4" data-step="6" style="grid-row:4;grid-column:7"><span class="n">6</span><h3>Confirma o pagamento</h3><p>O dinheiro cai direto na conta do restaurante (Asaas).</p></div>
+    <div class="card c2" data-step="7" style="grid-row:2;grid-column:8"><span class="n">7</span><h3>Recebe e prepara</h3><p>O pedido aparece na hora no painel: novo → em preparo → saiu → entregue.</p></div>
+    <div class="card c3" data-step="8" style="grid-row:3;grid-column:9"><span class="n">8</span><h3>Acompanha o pedido</h3><p>Uma página mostra o andamento, sem precisar ligar.</p></div>
+    <div class="card c3" data-step="9" style="grid-row:3;grid-column:10"><span class="n">9</span><h3>Indica amigos</h3><p>O amigo ganha desconto no 1º pedido; quem indicou ganha um cupom pelo WhatsApp.</p></div>
+    <div class="card c4" data-step="10" style="grid-row:4;grid-column:11"><span class="n">10</span><h3>Relatório do mês</h3><p>Enviadas, lidas, cliques, pedidos e vendas de cada campanha, em PDF.</p></div>
+
+    <svg class="arrows" id="arrows"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#463729"/></marker></defs></svg>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b>Só recebe quem autorizou</b>Cliente que responde SAIR sai da lista na hora, e a plataforma nunca manda de novo (LGPD).</div>
+    <div class="note"><b>Cada mensagem tem um link próprio</b>É assim que dá para saber quem leu, quem clicou e quem pediu, campanha por campanha.</div>
+    <div class="note"><b>O restaurante fica no controle</b>Aprova cada campanha, acompanha os pedidos em tempo real e recebe o dinheiro direto na própria conta.</div>
+  </div>
+</div>
+<script>
+  window.drawArrows = () => {
+    const board = document.getElementById('board').getBoundingClientRect();
+    const svg = document.getElementById('arrows');
+    svg.setAttribute('width', board.width); svg.setAttribute('height', board.height);
+    const cards = [...document.querySelectorAll('.card')].sort((a, b) => a.dataset.step - b.dataset.step);
+    for (let i = 0; i < cards.length - 1; i += 1) {
+      const a = cards[i].getBoundingClientRect(); const b = cards[i + 1].getBoundingClientRect();
+      const x2 = b.left - board.left - 3, y2 = b.top + b.height / 2 - board.top;
+      const sameRow = a.top < b.bottom && b.top < a.bottom;
+      let d;
+      if (sameRow) {
+        d = `M${a.right - board.left} ${y2} H${x2}`;
+      } else {
+        // Sai pelo meio de cima/baixo do cartão, desce/sobe e entra pela esquerda do próximo
+        const down = b.top > a.top;
+        const x = a.left + a.width / 2 - board.left;
+        const y1 = (down ? a.bottom : a.top) - board.top;
+        const r = 14 * (down ? 1 : -1);
+        d = `M${x} ${y1} V${y2 - r} Q${x} ${y2} ${x + 14} ${y2} H${x2}`;
+      }
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', '#463729'); p.setAttribute('stroke-width', '3'); p.setAttribute('marker-end', 'url(#ah)');
+      svg.appendChild(p);
+    }
+  };
+</script>
+</body>
+</html>
